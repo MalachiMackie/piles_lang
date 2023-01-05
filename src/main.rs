@@ -58,19 +58,16 @@ enum Token {
     Routine(Routine),
 }
 
-#[derive(Debug)]
-enum Constant {
-    I32(i32),
-}
-
 #[derive(PartialEq, Debug, Clone, Copy)]
 enum Type {
-    I32
+    I32,
+    Char,
 }
 
 #[derive(PartialEq, Debug, Clone)]
 enum Value {
     I32(i32),
+    Char(char),
 }
 
 #[derive(Debug, PartialEq)]
@@ -108,6 +105,14 @@ impl Stack {
             Some(Value::I32(value)) => Ok(value),
             Some(_) => Err(PopError::InvalidType),
             None => Err(PopError::StackEmpty)
+        }
+    }
+
+    fn pop_char(&mut self) -> Result<char, PopError> {
+        match self.pop() {
+            Some(Value::Char(value)) => Ok(value),
+            Some(_) => Err(PopError::InvalidType),
+            None => Err(PopError::StackEmpty),
         }
     }
 }

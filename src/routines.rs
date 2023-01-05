@@ -19,6 +19,10 @@ fn run_intrinsic_routine(routine: &IntrinsicRoutine, stack: &mut Stack) {
             let b = stack.pop_i32().expect("Type checking failed");
             stack.push(Value::I32(a - b));
         },
+        IntrinsicRoutine::PrintChar => {
+            let a = stack.pop_char().expect("Type checking failed");
+            println!("{}", a);
+        },
     }
 }
 
@@ -55,7 +59,16 @@ impl RoutineSigniture {
         match routine {
             IntrinsicRoutine::AddI32 => Self { inputs: vec![Type::I32, Type::I32].into_boxed_slice(), outputs: vec![Type::I32].into_boxed_slice(), name: "add".to_owned()},
             IntrinsicRoutine::MinusI32 => Self { inputs: vec![Type::I32, Type::I32].into_boxed_slice(), outputs: vec![Type::I32].into_boxed_slice(), name: "minus".to_owned()},
+            IntrinsicRoutine::PrintChar => Self { inputs: vec![Type::Char].into_boxed_slice(), outputs: Vec::new().into_boxed_slice(), name: "printc".to_owned()},
         }
+    }
+
+    pub(crate) fn inputs(&self) -> &[Type] {
+        self.inputs.as_ref()
+    }
+
+    pub(crate) fn outputs(&self) -> &[Type] {
+        self.outputs.as_ref()
     }
 }
 
@@ -63,6 +76,7 @@ impl RoutineSigniture {
 pub(crate) enum IntrinsicRoutine {
     AddI32,
     MinusI32,
+    PrintChar
 }
 
 #[cfg(test)]
@@ -92,6 +106,19 @@ mod tests {
         let routine = Routine::Intrinsic{ signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::AddI32), routine: IntrinsicRoutine::MinusI32};
         run_routine(&routine, &mut stack);
         let expected_stack = Stack::from_values(&vec![Value::I32(15)]);
+        assert_eq!(stack, expected_stack);
+    }
+
+    #[test]
+    fn test_print_char() {
+        // todo: test std::out
+        let mut stack = Stack::from_values(&vec![Value::Char('a')]);
+        let routine = Routine::Intrinsic {
+            signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar),
+            routine: IntrinsicRoutine::PrintChar
+        };
+        run_routine(&routine, &mut stack);
+        let expected_stack = Stack::new();
         assert_eq!(stack, expected_stack);
     }
 }

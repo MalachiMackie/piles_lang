@@ -5,6 +5,7 @@ fn parse_routine(value: &str) -> Option<Routine> {
     match value {
         "!add" => Some(Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::AddI32), routine: IntrinsicRoutine::AddI32}),
         "!minus" => Some(Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::MinusI32), routine: IntrinsicRoutine::MinusI32}),
+        "!printc" => Some(Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar), routine: IntrinsicRoutine::PrintChar}),
         _ => None
     }
 }
@@ -14,10 +15,29 @@ fn parse_token(value: &str) -> Result<Token, ParsingError> {
         Ok(Token::Constant(Value::I32(i32_value)))
     } else if let Some(routine) = parse_routine(value) {
         Ok(Token::Routine(routine))
+    } else if let Some(char_value) = parse_char(value) {
+        Ok(Token::Constant(Value::Char(char_value)))
     } else {
         println!("{}", value);
         Err(ParsingError::UnexpectedToken)
     }
+}
+
+fn parse_char(value: &str) -> Option<char> {
+    let mut chars = value.chars();
+    if chars.next() != Some('\'') {
+        return None;
+    }
+    let Some(char_value) = chars.next() else {
+        return None;
+    };
+    if chars.next() != Some('\'') {
+        return None;
+    }
+    if chars.next().is_some() {
+        return None;
+    }
+    return Some(char_value);
 }
 
 pub(crate) fn parse_input(input: &str) -> Result<Box<[Token]>, ParsingError> {
@@ -83,5 +103,24 @@ mod tests {
             Token::Constant(Value::I32(15)),
         ].into_boxed_slice();
         assert_eq!(token_stack, expected_stack);
+    }
+
+    #[test]
+    fn parse_char() {
+        let input = "'a'";
+        let parsed = parse_input(input);
+        assert!(parsed.is_ok());
+        let token_stack = parsed.unwrap();
+        let expected_stack = vec![
+            Token::Constant(Value::Char('a'))
+        ].into_boxed_slice();
+        assert_eq!(token_stack, expected_stack);
+    }
+
+    #[test]
+    fn parse_incomplete_char() {
+        let input = "'a";
+        let parsed = parse_input(input);
+        assert!(parsed.is_err());
     }
 }
