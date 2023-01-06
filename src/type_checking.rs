@@ -14,6 +14,7 @@ pub(crate) fn type_check(tokens: &[Token]) -> Result<(), TypeCheckError> {
             Token::Constant(_, Value::I32(_)) => type_stack.push_back(Type::I32),
             Token::Constant(_, Value::Char(_)) => type_stack.push_back(Type::Char),
             Token::Constant(_, Value::String(_)) => type_stack.push_back(Type::String),
+            Token::Constant(_, Value::Bool(_)) => type_stack.push_back(Type::Bool),
             Token::Routine(_, Routine::Intrinsic{signiture, routine: _}) => {
                 for input in signiture.inputs() {
                     let top = match type_stack.pop_back() {

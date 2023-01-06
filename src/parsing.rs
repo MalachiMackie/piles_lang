@@ -11,10 +11,11 @@ enum TokenType {
     ConstantI32,
     ConstantChar,
     ConstantString,
+    ConstantBool,
     Routine
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum ParseError {
     CharMissingOpeningTick,
     CharMissingClosingTick,
@@ -23,6 +24,7 @@ pub(crate) enum ParseError {
     StringMissingOpeningQuote,
     StringNoStringContent,
     StringMissingClosingQuote,
+    BoolInvalid,
     ParseIntError,
     InvalidRoutine,
 }
@@ -38,10 +40,12 @@ impl<'a> Parser<Chars<'a>> {
 
     fn next(&mut self) -> Option<Result<Token, ParseError>> {
         let mut current_part = Vec::new();
+        // todo: add all values
         let mut possible_token_types = vec![
             TokenType::ConstantChar,
             TokenType::ConstantString,
             TokenType::ConstantI32,
+            TokenType::ConstantBool,
             TokenType::Routine,
         ];
         let mut token_type = None;
@@ -76,6 +80,7 @@ impl<'a> Parser<Chars<'a>> {
             TokenType::ConstantChar => Some(parse_char(string_value.trim(), token_number)),
             TokenType::ConstantString => Some(parse_string(string_value.trim(), token_number)),
             TokenType::ConstantI32 => Some(string_value.trim().parse().map(|i32_value| Token::Constant(token_number, Value::I32(i32_value))).map_err(|e| ParseError::ParseIntError)),
+            TokenType::ConstantBool => Some(parse_bool(string_value.trim(), token_number)),
             TokenType::Routine => Some(parse_routine(string_value.trim(), token_number)),
         }
     }
@@ -102,6 +107,27 @@ fn evaluate_possible_tokens(value: &str, current_possibilities: &mut Vec<TokenTy
             current_possibilities.remove(found_index);
         }
     }
+    const true_str: &str = "true";
+    const false_str: &str = "false";
+    if let Some(found_index) = current_possibilities.iter().position(|p| p == &TokenType::ConstantBool) {
+        let mut true_chars = true_str.chars();
+        let mut false_chars = false_str.chars();
+        for (index, char_value) in value.chars().enumerate() {
+            let true_char = true_chars.next();
+            let false_char = false_chars.next();
+            let is_invalid = match (true_char, false_char) {
+                (None, None) => true,
+                (Some(true_char), None) => true_char != char_value,
+                (None, Some(false_char)) => false_char != char_value,
+                (Some(true_char), Some(false_char)) => true_char != char_value && false_char != char_value,
+            };
+            if is_invalid {
+                current_possibilities.remove(found_index);
+                break;
+            }
+        }
+    }
+
     if value.find(|c: char| !c.is_numeric() && c != '.').is_some() {
         // todo: floats
     }
@@ -119,27 +145,28 @@ fn parse_routine(value: &str, token_number: usize) -> Result<Token, ParseError> 
 }
 
 fn parse_char(value: &str, token_number: usize) -> Result<Token, ParseError> {
-    let mut chars = value.chars();
-    if chars.next() != Some('\'') {
+    if !value.starts_with('\'') {
         return Err(ParseError::CharMissingOpeningTick);
-    }
-    let Some(char_value) = chars.next() else {
-        return Err(ParseError::CharMissingChar);
-    };
-    if chars.next() != Some('\'') {
+    } else if !value.ends_with('\'') || value.len() == 1 {
         return Err(ParseError::CharMissingClosingTick);
+    };
+    let middle_chars: Vec<_> = value.chars().skip(1).collect();
+    // todo: allow escaping
+    match (middle_chars.len(), middle_chars.first()) {
+        (1, _) => Err(ParseError::CharMissingChar),
+        (2, Some(char_value)) => Ok(Token::Constant(token_number, Value::Char(*char_value))),
+        _ => Err(ParseError::CharExtraCharacters),
     }
-    if chars.next().is_some() {
-        return Err(ParseError::CharExtraCharacters);
-    }
-    Ok(Token::Constant(token_number, Value::Char(char_value)))
 }
 
 fn parse_string(value: &str, token_number: usize) -> Result<Token, ParseError> {
-    let mut chars = value.chars();
-    if chars.next() != Some('"') {
+    println!("{}", value);
+    if !value.starts_with('"') {
         return Err(ParseError::StringMissingOpeningQuote);
+    } else if !value.ends_with('"') || value.len() == 1 {
+        return Err(ParseError::StringMissingClosingQuote);
     }
+    let mut chars = value.chars().skip(1);
     let rest: Vec<_> = chars.collect();
     let Some(last_char) = rest.last() else {
         return Err(ParseError::StringNoStringContent);
@@ -149,6 +176,14 @@ fn parse_string(value: &str, token_number: usize) -> Result<Token, ParseError> {
     }
     let len = rest.len();
     Ok(Token::Constant(token_number, Value::String(rest.into_iter().take(len - 1).collect::<String>())))
+}
+
+fn parse_bool(value: &str, token_number: usize) -> Result<Token, ParseError> {
+    match value {
+        "true" => Ok(Token::Constant(token_number, Value::Bool(true))),
+        "false" => Ok(Token::Constant(token_number, Value::Bool(false))),
+        _ => Err(ParseError::BoolInvalid),
+    }
 }
 
 pub(crate) fn parse_input(input: &str) -> Result<Box<[Token]>, ParseError> {
@@ -213,6 +248,12 @@ mod tests {
                             Token::Constant(0, Value::Char('a')),
                             Token::Constant(1, Value::Char('$'))
                        ]),
+            test_input("bool",
+                       "true false",
+                       &vec![
+                            Token::Constant(0, Value::Bool(true)),
+                            Token::Constant(1, Value::Bool(false)),
+                       ]),
             test_input("empty string",
                        r#""""#,
                        &vec![
@@ -234,6 +275,64 @@ mod tests {
                                 routine: IntrinsicRoutine::PrintString,
                             }),
                        ]),
+        ];
+
+        let result: Result<Vec<_>, _> = results.into_iter().collect();
+        if let Err(err) = result {
+            println!("{}", err);
+            panic!();
+        }
+    }
+
+    fn test_invalid_input(description: &str, input: &str, expected_error: ParseError) -> Result<(), String> {
+        let parsed = parse_input(input);
+        match parsed {
+            Ok(tokens) => Err(format!("Input: \"{}\". Expected parse failure {:?}, but found successful: {:?}", input, expected_error, tokens)),
+            Err(err) if err != expected_error => Err(format!("Input: \"{}\". Expected parse failure {:?}, but found parse failure {:?}", input, expected_error, err)),
+            Err(err) => Ok(()),
+        }
+    }
+
+    #[test]
+    fn invalid_tokens() {
+        let results = [
+            test_invalid_input(
+                "char missing closing tick",
+                "'a",
+                ParseError::CharMissingClosingTick),
+            test_invalid_input(
+                "char missing character",
+                "''",
+                ParseError::CharMissingChar),
+            test_invalid_input(
+                "char only opening tick",
+                "'",
+                ParseError::CharMissingClosingTick),
+            test_invalid_input(
+                "char extra characters",
+                "'abc'",
+                ParseError::CharExtraCharacters),
+            test_invalid_input(
+                "char extra characters after tick",
+                "'a'abc",
+                ParseError::CharMissingClosingTick),
+            test_invalid_input(
+                "i32 with number",
+                "1a",
+                ParseError::ParseIntError),
+            test_invalid_input(
+                "string missing closing quote",
+                r#""something"#,
+                ParseError::StringMissingClosingQuote),
+// todo: fix this test case
+//            test_invalid_input(
+//                "string extra characters",
+//                r#""something"abc"#,
+//                ParseError::StringMissingClosingQuote),
+            test_invalid_input(
+                "string single quote only",
+                r#"""#,
+                ParseError::StringMissingClosingQuote),
         ];
 
         let result: Result<Vec<_>, _> = results.into_iter().collect();

@@ -63,6 +63,7 @@ enum Type {
     I32,
     Char,
     String,
+    Bool,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -70,6 +71,7 @@ enum Value {
     I32(i32),
     Char(char),
     String(String),
+    Bool(bool),
 }
 
 #[derive(Debug, PartialEq)]
