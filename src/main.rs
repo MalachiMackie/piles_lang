@@ -62,12 +62,14 @@ enum Token {
 enum Type {
     I32,
     Char,
+    String,
 }
 
 #[derive(PartialEq, Debug, Clone)]
 enum Value {
     I32(i32),
     Char(char),
+    String(String),
 }
 
 #[derive(Debug, PartialEq)]

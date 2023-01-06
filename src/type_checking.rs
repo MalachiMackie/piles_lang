@@ -13,6 +13,7 @@ pub(crate) fn type_check(tokens: &[Token]) -> Result<(), TypeCheckError> {
         match token {
             Token::Constant(Value::I32(_)) => type_stack.push_back(Type::I32),
             Token::Constant(Value::Char(_)) => type_stack.push_back(Type::Char),
+            Token::Constant(Value::String(_)) => type_stack.push_back(Type::String),
             Token::Routine(Routine::Intrinsic{signiture, routine: _}) => {
                 for input in signiture.inputs() {
                     let top = match type_stack.pop_back() {
