@@ -117,4 +117,12 @@ impl Stack {
             None => Err(PopError::StackEmpty),
         }
     }
+
+    fn pop_string(&mut self) -> Result<String, PopError> {
+        match self.pop() {
+            Some(Value::String(value)) => Ok(value),
+            Some(_) => Err(PopError::InvalidType),
+            None => Err(PopError::StackEmpty),
+        }
+    }
 }

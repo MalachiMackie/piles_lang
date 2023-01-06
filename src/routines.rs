@@ -23,6 +23,10 @@ fn run_intrinsic_routine(routine: &IntrinsicRoutine, stack: &mut Stack) {
             let a = stack.pop_char().expect("Type checking failed");
             println!("{}", a);
         },
+        IntrinsicRoutine::PrintString => {
+            let a = stack.pop_string().expect("Type checking failed");
+            println!("{}", a);
+        },
     }
 }
 
@@ -60,6 +64,7 @@ impl RoutineSigniture {
             IntrinsicRoutine::AddI32 => Self { inputs: vec![Type::I32, Type::I32].into_boxed_slice(), outputs: vec![Type::I32].into_boxed_slice(), name: "add".to_owned()},
             IntrinsicRoutine::MinusI32 => Self { inputs: vec![Type::I32, Type::I32].into_boxed_slice(), outputs: vec![Type::I32].into_boxed_slice(), name: "minus".to_owned()},
             IntrinsicRoutine::PrintChar => Self { inputs: vec![Type::Char].into_boxed_slice(), outputs: Vec::new().into_boxed_slice(), name: "printc".to_owned()},
+            IntrinsicRoutine::PrintString => Self { inputs: vec![Type::String].into_boxed_slice(), outputs: Vec::new().into_boxed_slice(), name: "prints".to_owned()},
         }
     }
 
@@ -76,7 +81,8 @@ impl RoutineSigniture {
 pub(crate) enum IntrinsicRoutine {
     AddI32,
     MinusI32,
-    PrintChar
+    PrintChar,
+    PrintString,
 }
 
 #[cfg(test)]
@@ -116,6 +122,18 @@ mod tests {
         let routine = Routine::Intrinsic {
             signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar),
             routine: IntrinsicRoutine::PrintChar
+        };
+        run_routine(&routine, &mut stack);
+        let expected_stack = Stack::new();
+        assert_eq!(stack, expected_stack);
+    }
+
+    #[test]
+    fn test_print_string() {
+        let mut stack = Stack::from_values(&vec![Value::String("Hello World!".to_owned())]);
+        let routine = Routine::Intrinsic {
+            signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintString),
+            routine: IntrinsicRoutine::PrintString,
         };
         run_routine(&routine, &mut stack);
         let expected_stack = Stack::new();
