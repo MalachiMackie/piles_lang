@@ -2,7 +2,8 @@ use crate::{routines::{Routine, IntrinsicRoutine, RoutineSigniture}, Token, Type
 use std::str::Chars;
 
 struct Parser<I : Iterator<Item = char>> {
-    chars: I
+    chars: I,
+    next_token: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,7 +31,8 @@ impl<'a> Parser<Chars<'a>> {
     fn new(input: &'a str) -> Self {
         let chars = input.chars();
         Self {
-            chars
+            chars,
+            next_token: 0,
         }
     }
 
@@ -65,12 +67,16 @@ impl<'a> Parser<Chars<'a>> {
             }
         }
         let string_value: String = current_part.into_iter().collect();
+        let Some(token_type) = token_type else {
+            return None;
+        };
+        let token_number = self.next_token;
+        self.next_token += 1;
         match token_type {
-            Some(TokenType::ConstantChar) => Some(parse_char(string_value.trim())),
-            Some(TokenType::ConstantString) => Some(parse_string(string_value.trim())),
-            Some(TokenType::ConstantI32) => Some(string_value.trim().parse().map(|i32_value| Token::Constant(Value::I32(i32_value))).map_err(|e| ParseError::ParseIntError)),
-            Some(TokenType::Routine) => Some(parse_routine(string_value.trim())),
-            None => None,
+            TokenType::ConstantChar => Some(parse_char(string_value.trim(), token_number)),
+            TokenType::ConstantString => Some(parse_string(string_value.trim(), token_number)),
+            TokenType::ConstantI32 => Some(string_value.trim().parse().map(|i32_value| Token::Constant(token_number, Value::I32(i32_value))).map_err(|e| ParseError::ParseIntError)),
+            TokenType::Routine => Some(parse_routine(string_value.trim(), token_number)),
         }
     }
 }
@@ -101,18 +107,18 @@ fn evaluate_possible_tokens(value: &str, current_possibilities: &mut Vec<TokenTy
     }
 }
 
-fn parse_routine(value: &str) -> Result<Token, ParseError> {
+fn parse_routine(value: &str, token_number: usize) -> Result<Token, ParseError> {
     // todo: add compile type checks
     match value {
-        "!add" => Ok(Token::Routine(Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::AddI32), routine: IntrinsicRoutine::AddI32})),
-        "!minus" => Ok(Token::Routine(Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::MinusI32), routine: IntrinsicRoutine::MinusI32})),
-        "!printc" => Ok(Token::Routine(Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar), routine: IntrinsicRoutine::PrintChar})),
-        "!prints" => Ok(Token::Routine(Routine::Intrinsic{ signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintString), routine: IntrinsicRoutine::PrintString})),
+        "!add" => Ok(Token::Routine(token_number, Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::AddI32), routine: IntrinsicRoutine::AddI32})),
+        "!minus" => Ok(Token::Routine(token_number, Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::MinusI32), routine: IntrinsicRoutine::MinusI32})),
+        "!printc" => Ok(Token::Routine(token_number, Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar), routine: IntrinsicRoutine::PrintChar})),
+        "!prints" => Ok(Token::Routine(token_number, Routine::Intrinsic{ signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintString), routine: IntrinsicRoutine::PrintString})),
         _ => Err(ParseError::InvalidRoutine),
     }
 }
 
-fn parse_char(value: &str) -> Result<Token, ParseError> {
+fn parse_char(value: &str, token_number: usize) -> Result<Token, ParseError> {
     let mut chars = value.chars();
     if chars.next() != Some('\'') {
         return Err(ParseError::CharMissingOpeningTick);
@@ -126,10 +132,10 @@ fn parse_char(value: &str) -> Result<Token, ParseError> {
     if chars.next().is_some() {
         return Err(ParseError::CharExtraCharacters);
     }
-    Ok(Token::Constant(Value::Char(char_value)))
+    Ok(Token::Constant(token_number, Value::Char(char_value)))
 }
 
-fn parse_string(value: &str) -> Result<Token, ParseError> {
+fn parse_string(value: &str, token_number: usize) -> Result<Token, ParseError> {
     let mut chars = value.chars();
     if chars.next() != Some('"') {
         return Err(ParseError::StringMissingOpeningQuote);
@@ -142,7 +148,7 @@ fn parse_string(value: &str) -> Result<Token, ParseError> {
         return Err(ParseError::StringMissingClosingQuote);
     }
     let len = rest.len();
-    Ok(Token::Constant(Value::String(rest.into_iter().take(len - 1).collect::<String>())))
+    Ok(Token::Constant(token_number, Value::String(rest.into_iter().take(len - 1).collect::<String>())))
 }
 
 pub(crate) fn parse_input(input: &str) -> Result<Box<[Token]>, ParseError> {
@@ -174,10 +180,10 @@ mod tests {
         let results = vec![
             test_input("constant i32 pushing",
                        "10 5",
-                       &vec![Token::Constant(Value::I32(10)), Token::Constant(Value::I32(5))]),
+                       &vec![Token::Constant(0, Value::I32(10)), Token::Constant(1, Value::I32(5))]),
             test_input("routine",
                        "!add",
-                       &vec![Token::Routine(Routine::Intrinsic {
+                       &vec![Token::Routine(0, Routine::Intrinsic {
                             signiture: RoutineSigniture::new("add",
                                                             &vec![Type::I32, Type::I32],
                                                             &vec![Type::I32]),
@@ -186,42 +192,42 @@ mod tests {
             test_input("negative number",
                        "-124",
                        &vec![
-                            Token::Constant(Value::I32(-124)),
+                            Token::Constant(0, Value::I32(-124)),
                        ]),
             test_input("constants and routine",
                        "10 5 !minus 15",
                        &vec![
-                            Token::Constant(Value::I32(10)),
-                            Token::Constant(Value::I32(5)),
-                            Token::Routine(Routine::Intrinsic {
+                            Token::Constant(0, Value::I32(10)),
+                            Token::Constant(1, Value::I32(5)),
+                            Token::Routine(2, Routine::Intrinsic {
                                 signiture: RoutineSigniture::new("minus",
                                                             &vec![Type::I32, Type::I32],
                                                             &vec![Type::I32]),
                                 routine: IntrinsicRoutine::MinusI32
                             }),
-                            Token::Constant(Value::I32(15)),
+                            Token::Constant(3, Value::I32(15)),
                        ]),
             test_input("char",
                        "'a' '$'",
                        &vec![
-                            Token::Constant(Value::Char('a')),
-                            Token::Constant(Value::Char('$'))
+                            Token::Constant(0, Value::Char('a')),
+                            Token::Constant(1, Value::Char('$'))
                        ]),
             test_input("empty string",
                        r#""""#,
                        &vec![
-                            Token::Constant(Value::String(String::new()))
+                            Token::Constant(0, Value::String(String::new()))
                        ]),
             test_input("string with space",
                        r#""some string""#,
                        &vec![
-                            Token::Constant(Value::String("some string".to_owned())),
+                            Token::Constant(0, Value::String("some string".to_owned())),
                        ]),
             test_input("string then routine",
                        r#""Hello World!" !prints"#,
                        &vec![
-                            Token::Constant(Value::String("Hello World!".to_owned())),
-                            Token::Routine(Routine::Intrinsic {
+                            Token::Constant(0, Value::String("Hello World!".to_owned())),
+                            Token::Routine(1, Routine::Intrinsic {
                                 signiture: RoutineSigniture::new("prints",
                                                                  &vec![Type::String],
                                                                  &Vec::new()),

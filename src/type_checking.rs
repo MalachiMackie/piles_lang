@@ -11,10 +11,10 @@ pub(crate) fn type_check(tokens: &[Token]) -> Result<(), TypeCheckError> {
     let mut type_stack = VecDeque::new();
     for token in tokens.iter() {
         match token {
-            Token::Constant(Value::I32(_)) => type_stack.push_back(Type::I32),
-            Token::Constant(Value::Char(_)) => type_stack.push_back(Type::Char),
-            Token::Constant(Value::String(_)) => type_stack.push_back(Type::String),
-            Token::Routine(Routine::Intrinsic{signiture, routine: _}) => {
+            Token::Constant(_, Value::I32(_)) => type_stack.push_back(Type::I32),
+            Token::Constant(_, Value::Char(_)) => type_stack.push_back(Type::Char),
+            Token::Constant(_, Value::String(_)) => type_stack.push_back(Type::String),
+            Token::Routine(_, Routine::Intrinsic{signiture, routine: _}) => {
                 for input in signiture.inputs() {
                     let top = match type_stack.pop_back() {
                         Some(top) => top,
@@ -47,7 +47,7 @@ mod tests {
 
     #[test]
     fn constast_pushing_should_succeed() {
-        let tokens = [Token::Constant(Value::I32(10))];
+        let tokens = [Token::Constant(0, Value::I32(10))];
         let result = type_check(&tokens);
         assert!(result.is_ok());
     }
@@ -55,9 +55,9 @@ mod tests {
     #[test]
     fn routine_call_should_succeed() {
         let tokens = [
-            Token::Constant(Value::I32(10)),
-            Token::Constant(Value::I32(10)),
-            Token::Routine(Routine::Intrinsic {
+            Token::Constant(0, Value::I32(10)),
+            Token::Constant(1, Value::I32(10)),
+            Token::Routine(2, Routine::Intrinsic {
                 signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::AddI32),
                 routine: IntrinsicRoutine::AddI32
             })
@@ -69,8 +69,8 @@ mod tests {
     #[test]
     fn routine_call_should_fail_when_not_enough_tokens() {
         let tokens = [
-            Token::Constant(Value::I32(10)),
-            Token::Routine(Routine::Intrinsic {
+            Token::Constant(0, Value::I32(10)),
+            Token::Routine(1, Routine::Intrinsic {
                 signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::AddI32),
                 routine: IntrinsicRoutine::AddI32
             })
@@ -82,9 +82,9 @@ mod tests {
     #[test]
     fn routine_call_should_fail_when_incorrect_types() {
         let tokens = [
-            Token::Constant(Value::I32(10)),
-            Token::Constant(Value::Char('a')),
-            Token::Routine(Routine::Intrinsic {
+            Token::Constant(0, Value::I32(10)),
+            Token::Constant(1, Value::Char('a')),
+            Token::Routine(2, Routine::Intrinsic {
                 signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::AddI32),
                 routine: IntrinsicRoutine::AddI32,
             })

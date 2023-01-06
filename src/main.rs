@@ -45,8 +45,8 @@ fn run(tokens: &[Token]) -> Stack {
     let mut stack = Stack::new();
     for token in tokens.iter() {
         match token {
-            Token::Constant(value) => stack.push(value.clone()),
-            Token::Routine(routine) => run_routine(routine, &mut stack),
+            Token::Constant(_, value) => stack.push(value.clone()),
+            Token::Routine(_, routine) => run_routine(routine, &mut stack),
         }
     }
     stack
@@ -54,8 +54,8 @@ fn run(tokens: &[Token]) -> Stack {
 
 #[derive(PartialEq, Debug, Clone)]
 enum Token {
-    Constant(Value),
-    Routine(Routine),
+    Constant(usize, Value),
+    Routine(usize, Routine),
 }
 
 #[derive(PartialEq, Debug, Clone, Copy)]
