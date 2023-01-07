@@ -16,6 +16,7 @@ enum TokenType {
     Routine,
     OpenBlock,
     CloseBlock,
+    If,
 }
 
 #[derive(Debug, PartialEq)]
@@ -54,6 +55,7 @@ impl<'a> Parser<Chars<'a>> {
             TokenType::Routine,
             TokenType::OpenBlock,
             TokenType::CloseBlock,
+            TokenType::If,
         ];
         let mut token_type = None;
         let mut delimeter: &dyn Fn(char) -> bool = &char::is_whitespace;
@@ -99,6 +101,7 @@ impl<'a> Parser<Chars<'a>> {
                     Some(Err(ParseError::MissingOpenBlock))
                 }
             },
+            TokenType::If => Some(Ok(Token::If(token_number))),
             TokenType::Routine => Some(parse_routine(string_value.trim(), token_number)),
         }
     }
@@ -132,6 +135,11 @@ fn evaluate_possible_tokens(value: &str, current_possibilities: &mut Vec<TokenTy
     }
     if value != "}" {
         if let Some(found_index) = current_possibilities.iter().position(|p| p == &TokenType::CloseBlock) {
+            current_possibilities.remove(found_index);
+        }
+    }
+    if !"if".starts_with(value) {
+        if let Some(found_index) = current_possibilities.iter().position(|p| p == &TokenType::If) {
             current_possibilities.remove(found_index);
         }
     }
@@ -317,6 +325,21 @@ mod tests {
                             Token::Block(2, Block::Close { open_position: 1 }),
                             Token::Block(3, Block::Close { open_position: 0 }),
                        ]),
+            test_input("if block",
+                       r"true if {
+                            'a' !printc
+                        }",
+                        &vec![
+                            Token::Constant(0, Value::Bool(true)),
+                            Token::If(1),
+                            Token::Block(2, Block::Open),
+                            Token::Constant(3, Value::Char('a')),
+                            Token::Routine(4, Routine::Intrinsic {
+                                signiture: RoutineSigniture::new("printc", &vec![Type::Char], &Vec::new()),
+                                routine: IntrinsicRoutine::PrintChar
+                            }),
+                            Token::Block(5, Block::Close { open_position: 2 }),
+                        ]),
         ];
 
         let result: Result<Vec<_>, _> = results.into_iter().collect();
