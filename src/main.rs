@@ -43,12 +43,26 @@ fn main() {
 
 fn run(tokens: &[Token]) -> Stack {
     let mut stack = Stack::new();
+    let mut continue_until_block_closes = None;
     for token in tokens.iter() {
+        match (continue_until_block_closes, token) {
+            (Some(open_position), Token::Block(_, Block::Close { open_position: block_open_position })) if *block_open_position == open_position => {
+                continue_until_block_closes = None;
+            },
+            (None, _) => (),
+            (Some(_), _) => {continue;}
+        }
         match token {
             Token::Constant(_, value) => stack.push(value.clone()),
             Token::Routine(_, routine) => run_routine(routine, &mut stack),
             Token::Block(_, block) => (),
-            Token::If(_) => todo!(),
+            Token::If(position) => {
+                if let Ok(false) = stack.pop_bool() {
+                    // position + 1 assumes type checking ensured that if is followed by opening
+                    // block
+                    continue_until_block_closes = Some(position + 1);
+                }
+            }
         }
     }
     stack
@@ -133,6 +147,14 @@ impl Stack {
     fn pop_string(&mut self) -> Result<String, PopError> {
         match self.pop() {
             Some(Value::String(value)) => Ok(value),
+            Some(_) => Err(PopError::InvalidType),
+            None => Err(PopError::StackEmpty),
+        }
+    }
+
+    fn pop_bool(&mut self) -> Result<bool, PopError> {
+        match self.pop() {
+            Some(Value::Bool(value)) => Ok(value),
             Some(_) => Err(PopError::InvalidType),
             None => Err(PopError::StackEmpty),
         }
