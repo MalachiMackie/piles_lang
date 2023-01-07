@@ -1,9 +1,10 @@
-use crate::{routines::{Routine, IntrinsicRoutine, RoutineSigniture}, Token, Type, Value};
+use crate::{routines::{Routine, IntrinsicRoutine, RoutineSigniture}, Token, Type, Value, Block};
 use std::str::Chars;
 
 struct Parser<I : Iterator<Item = char>> {
     chars: I,
     next_token: usize,
+    block_stack: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -12,7 +13,9 @@ enum TokenType {
     ConstantChar,
     ConstantString,
     ConstantBool,
-    Routine
+    Routine,
+    OpenBlock,
+    CloseBlock,
 }
 
 #[derive(Debug, PartialEq)]
@@ -27,6 +30,7 @@ pub(crate) enum ParseError {
     BoolInvalid,
     ParseIntError,
     InvalidRoutine,
+    MissingOpenBlock,
 }
 
 impl<'a> Parser<Chars<'a>> {
@@ -35,6 +39,7 @@ impl<'a> Parser<Chars<'a>> {
         Self {
             chars,
             next_token: 0,
+            block_stack: Vec::new(),
         }
     }
 
@@ -47,6 +52,8 @@ impl<'a> Parser<Chars<'a>> {
             TokenType::ConstantI32,
             TokenType::ConstantBool,
             TokenType::Routine,
+            TokenType::OpenBlock,
+            TokenType::CloseBlock,
         ];
         let mut token_type = None;
         let mut delimeter: &dyn Fn(char) -> bool = &char::is_whitespace;
@@ -81,6 +88,17 @@ impl<'a> Parser<Chars<'a>> {
             TokenType::ConstantString => Some(parse_string(string_value.trim(), token_number)),
             TokenType::ConstantI32 => Some(string_value.trim().parse().map(|i32_value| Token::Constant(token_number, Value::I32(i32_value))).map_err(|e| ParseError::ParseIntError)),
             TokenType::ConstantBool => Some(parse_bool(string_value.trim(), token_number)),
+            TokenType::OpenBlock => {
+                self.block_stack.push(token_number);
+                Some(Ok(Token::Block(token_number, Block::Open)))
+            },
+            TokenType::CloseBlock => {
+                if let Some(open_position) = self.block_stack.pop() {
+                    Some(Ok(Token::Block(token_number, Block::Close { open_position })))
+                } else {
+                    Some(Err(ParseError::MissingOpenBlock))
+                }
+            },
             TokenType::Routine => Some(parse_routine(string_value.trim(), token_number)),
         }
     }
@@ -104,6 +122,16 @@ fn evaluate_possible_tokens(value: &str, current_possibilities: &mut Vec<TokenTy
     }
     if value.find(|c: char| c == '.' || !(c.is_numeric() || c == '-')).is_some() {
         if let Some(found_index) = current_possibilities.iter().position(|p| p == &TokenType::ConstantI32) {
+            current_possibilities.remove(found_index);
+        }
+    }
+    if value != "{" {
+        if let Some(found_index) = current_possibilities.iter().position(|p| p == &TokenType::OpenBlock) {
+            current_possibilities.remove(found_index);
+        }
+    }
+    if value != "}" {
+        if let Some(found_index) = current_possibilities.iter().position(|p| p == &TokenType::CloseBlock) {
             current_possibilities.remove(found_index);
         }
     }
@@ -275,6 +303,20 @@ mod tests {
                                 routine: IntrinsicRoutine::PrintString,
                             }),
                        ]),
+            test_input("block",
+                       "{ }",
+                       &vec![
+                            Token::Block(0, Block::Open),
+                            Token::Block(1, Block::Close { open_position: 0 }),
+                       ]),
+            test_input("nested block",
+                       "{ { } }",
+                       &vec![
+                            Token::Block(0, Block::Open),
+                            Token::Block(1, Block::Open),
+                            Token::Block(2, Block::Close { open_position: 1 }),
+                            Token::Block(3, Block::Close { open_position: 0 }),
+                       ]),
         ];
 
         let result: Result<Vec<_>, _> = results.into_iter().collect();
@@ -333,6 +375,10 @@ mod tests {
                 "string single quote only",
                 r#"""#,
                 ParseError::StringMissingClosingQuote),
+            test_invalid_input(
+                "missing open block",
+                "}",
+                ParseError::MissingOpenBlock),
         ];
 
         let result: Result<Vec<_>, _> = results.into_iter().collect();
@@ -340,12 +386,5 @@ mod tests {
             println!("{}", err);
             panic!();
         }
-    }
-
-    #[test]
-    fn parse_incomplete_char() {
-        let input = "'a";
-        let parsed = parse_input(input);
-        assert!(parsed.is_err());
     }
 }

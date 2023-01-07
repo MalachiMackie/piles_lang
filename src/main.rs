@@ -47,7 +47,8 @@ fn run(tokens: &[Token]) -> Stack {
         match token {
             Token::Constant(_, value) => stack.push(value.clone()),
             Token::Routine(_, routine) => run_routine(routine, &mut stack),
-            Token::Block(_, block) => todo!(),
+            Token::Block(_, block) => (),
+            Token::If(_) => todo!(),
         }
     }
     stack
@@ -58,6 +59,7 @@ enum Token {
     Constant(usize, Value),
     Routine(usize, Routine),
     Block(usize, Block),
+    If(usize),
 }
 
 #[derive(PartialEq, Debug, Clone)]
