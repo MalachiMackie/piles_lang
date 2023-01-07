@@ -176,6 +176,7 @@ fn parse_routine(value: &str, token_number: usize) -> Result<Token, ParseError> 
         "!minus" => Ok(Token::Routine(token_number, Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::MinusI32), routine: IntrinsicRoutine::MinusI32})),
         "!printc" => Ok(Token::Routine(token_number, Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar), routine: IntrinsicRoutine::PrintChar})),
         "!prints" => Ok(Token::Routine(token_number, Routine::Intrinsic{ signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintString), routine: IntrinsicRoutine::PrintString})),
+        "!eq" => Ok(Token::Routine(token_number, Routine::Intrinsic { signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Eq), routine: IntrinsicRoutine::Eq})),
         _ => Err(ParseError::InvalidRoutine),
     }
 }

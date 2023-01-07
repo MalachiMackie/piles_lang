@@ -27,6 +27,11 @@ fn run_intrinsic_routine(routine: &IntrinsicRoutine, stack: &mut Stack) {
             let a = stack.pop_string().expect("Type checking failed");
             println!("{}", a);
         },
+        IntrinsicRoutine::Eq => {
+            let a = stack.pop().expect("Type checking failed");
+            let b = stack.pop().expect("Type checking failed");
+            stack.push(Value::Bool(a == b));
+        },
     }
 }
 
@@ -65,6 +70,7 @@ impl RoutineSigniture {
             IntrinsicRoutine::MinusI32 => Self { inputs: vec![Type::I32, Type::I32].into_boxed_slice(), outputs: vec![Type::I32].into_boxed_slice(), name: "minus".to_owned()},
             IntrinsicRoutine::PrintChar => Self { inputs: vec![Type::Char].into_boxed_slice(), outputs: Vec::new().into_boxed_slice(), name: "printc".to_owned()},
             IntrinsicRoutine::PrintString => Self { inputs: vec![Type::String].into_boxed_slice(), outputs: Vec::new().into_boxed_slice(), name: "prints".to_owned()},
+            IntrinsicRoutine::Eq => Self { inputs: vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "A".to_owned() }].into_boxed_slice(), outputs: vec![Type::Bool].into_boxed_slice(), name: "eq".to_owned()},
         }
     }
 
@@ -83,6 +89,7 @@ pub(crate) enum IntrinsicRoutine {
     MinusI32,
     PrintChar,
     PrintString,
+    Eq,
 }
 
 #[cfg(test)]

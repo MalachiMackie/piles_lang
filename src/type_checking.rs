@@ -1,5 +1,5 @@
 use crate::{Token, Routine, Value, Type, Block};
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 
 #[derive(Debug)]
 pub(crate) enum TypeCheckError {
@@ -10,6 +10,7 @@ pub(crate) enum TypeCheckError {
     ClosingIncorrectBlock,
     NonEmptyStackAfterBlock,
     IfNotBeforeBlock,
+    MissingGenericOutput,
 }
 
 pub(crate) fn type_check(tokens: &[Token]) -> Result<(), TypeCheckError> {
@@ -78,17 +79,38 @@ pub(crate) fn type_check(tokens: &[Token]) -> Result<(), TypeCheckError> {
                 let Some(type_stack) = type_stacks.last_mut() else {
                     panic!("Missing type stack");
                 };
+                let mut generic_types: HashMap<String, Type> = HashMap::new();
                 for input in signiture.inputs() {
                     let top = match type_stack.pop() {
                         Some(top) => top,
                         None => return Err(TypeCheckError::NotEnoughItems),
                     };
-                    if top != *input {
-                        return Err(TypeCheckError::IncorrectType);
+                    match input {
+                        Type::Generic { name } => {
+                            if let Some(found_type) = generic_types.get(name) {
+                                if *found_type != top {
+                                    return Err(TypeCheckError::IncorrectType);
+                                }
+                            } else {
+                                generic_types.insert(name.to_owned(), top);
+                            }
+                        },
+                        _ if top != *input => { return Err(TypeCheckError::IncorrectType); },
+                        _ => (),
                     }
                 }
                 for output in signiture.outputs() {
-                    type_stack.push(output.clone());
+                    match output {
+                        Type::Generic { name } => {
+                            let Some(found_type) = generic_types.get(name) else {
+                                return Err(TypeCheckError::MissingGenericOutput);
+                            };
+                            type_stack.push(found_type.clone());
+                        },
+                        output => {
+                            type_stack.push(output.clone());
+                        },
+                    }
                 }
             }
         }
@@ -299,5 +321,61 @@ mod tests {
         ];
         let result = type_check(&tokens);
         assert!(matches!(result, Err(TypeCheckError::IfNotBeforeBlock)));
+    }
+
+    #[test]
+    fn generic_succeeds() {
+        let tokens = [
+            Token::Constant(0, Value::String("Some String".to_owned())),
+            Token::Constant(1, Value::Char('a')),
+            Token::Routine(2, Routine::Intrinsic {
+                signiture: RoutineSigniture::new(
+                    "Something",
+                    &vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "B".to_owned() }].into_boxed_slice(),
+                    &vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "B".to_owned() }].into_boxed_slice(),
+                ),
+                routine: IntrinsicRoutine::Eq
+            }),
+            Token::Routine(3, Routine::Intrinsic {
+                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintString),
+                routine: IntrinsicRoutine::PrintString
+            }),
+            Token::Routine(4, Routine::Intrinsic {
+                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar),
+                routine: IntrinsicRoutine::PrintChar,
+            }),
+        ];
+        let result = type_check(&tokens);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn generic_fail_empty_stack() {
+        let tokens = [
+            Token::Routine(0, Routine::Intrinsic {
+                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Eq),
+                routine: IntrinsicRoutine::Eq,
+            }),
+        ];
+        let result = type_check(&tokens);
+        assert!(matches!(result, Err(TypeCheckError::NotEnoughItems)));
+    }
+
+    #[test]
+    fn generic_incorrect_types() {
+        let tokens = [
+            Token::Constant(0, Value::Char('a')),
+            Token::Constant(1, Value::String("Some String".to_owned())),
+            Token::Routine(2, Routine::Intrinsic {
+                signiture: RoutineSigniture::new(
+                    "Something",
+                    &vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "A".to_owned() }].into_boxed_slice(),
+                    &Vec::new().into_boxed_slice(),
+                ),
+                routine: IntrinsicRoutine::Eq,
+            }),
+        ];
+        let result = type_check(&tokens);
+        assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
     }
 }

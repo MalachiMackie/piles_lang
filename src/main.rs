@@ -82,8 +82,9 @@ enum Block {
     Close { open_position: usize },
 }
 
-#[derive(PartialEq, Debug, Clone, Copy)]
+#[derive(PartialEq, Debug, Clone)]
 enum Type {
+    Generic { name: String },
     I32,
     Char,
     String,
