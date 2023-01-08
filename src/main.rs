@@ -8,6 +8,7 @@ use type_checking::type_check;
 use std::collections::{HashMap,VecDeque};
 use std::env;
 use std::io::prelude::*;
+use std::fmt::{Display, Formatter};
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -43,27 +44,38 @@ fn main() {
 
 fn run(tokens: &[Token]) -> Stack {
     let mut stack = Stack::new();
-    let mut continue_until_block_closes = None;
-    for token in tokens.iter() {
-        match (continue_until_block_closes, token) {
-            (Some(open_position), Token::Block(_, Block::Close { open_position: block_open_position })) if *block_open_position == open_position => {
-                continue_until_block_closes = None;
-            },
-            (None, _) => (),
-            (Some(_), _) => {continue;}
-        }
+    if tokens.is_empty() {
+        return stack;
+    }
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = &tokens[index];
         match token {
-            Token::Constant(_, value) => stack.push(value.clone()),
-            Token::Routine(_, routine) => run_routine(routine, &mut stack),
-            Token::Block(_, block) => (),
-            Token::If(position) => {
-                if let Ok(false) = stack.pop_bool() {
-                    // position + 1 assumes type checking ensured that if is followed by opening
-                    // block
-                    continue_until_block_closes = Some(position + 1);
+            Token::Constant(_, value) => {
+                stack.push(value.clone());
+            },
+            Token::Routine(_, routine) => {
+                run_routine(&routine, &mut stack);
+            },
+            Token::Block(position, Block::Open { close_position }) => {
+                
+            },
+            Token::Block(_, Block::Close { open_position }) => {
+                if let Token::While(while_position) = &tokens[open_position - 1] {
+                    index = while_position - 1;
                 }
-            }
+            },
+            Token::If(_) | Token::While(_) => {
+                let Token::Block(_, Block::Open { close_position }) = &tokens[index + 1] else {
+                    panic!("Expected open block after if or while");
+                };
+
+                if !stack.pop_bool().expect("Type Checking Failed") {
+                    index = *close_position;
+                }
+            },
         }
+        index += 1;
     }
     stack
 }
@@ -74,11 +86,12 @@ enum Token {
     Routine(usize, Routine),
     Block(usize, Block),
     If(usize),
+    While(usize),
 }
 
 #[derive(PartialEq, Debug, Clone)]
 enum Block {
-    Open,
+    Open { close_position: usize },
     Close { open_position: usize },
 }
 
@@ -97,6 +110,17 @@ enum Value {
     Char(char),
     String(String),
     Bool(bool),
+}
+
+impl Display for Value {
+    fn fmt(&self, mut formatter: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            Value::I32(value) => value.fmt(&mut formatter),
+            Value::Char(value) => value.fmt(&mut formatter),
+            Value::String(value) => value.fmt(&mut formatter),
+            Value::Bool(value) => value.fmt(&mut formatter),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]

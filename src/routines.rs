@@ -19,18 +19,29 @@ fn run_intrinsic_routine(routine: &IntrinsicRoutine, stack: &mut Stack) {
             let b = stack.pop_i32().expect("Type checking failed");
             stack.push(Value::I32(a - b));
         },
-        IntrinsicRoutine::PrintChar => {
-            let a = stack.pop_char().expect("Type checking failed");
-            println!("{}", a);
-        },
-        IntrinsicRoutine::PrintString => {
-            let a = stack.pop_string().expect("Type checking failed");
+        IntrinsicRoutine::Print=> {
+            let a = stack.pop().expect("Type checking failed");
             println!("{}", a);
         },
         IntrinsicRoutine::Eq => {
             let a = stack.pop().expect("Type checking failed");
             let b = stack.pop().expect("Type checking failed");
             stack.push(Value::Bool(a == b));
+        },
+        IntrinsicRoutine::Not => {
+            let a = stack.pop_bool().expect("Type checking_failed");
+            stack.push(Value::Bool(!a));
+        },
+        IntrinsicRoutine::Clone => {
+            let a = stack.pop().expect("Type checking failed");
+            stack.push(a.clone());
+            stack.push(a);
+        },
+        IntrinsicRoutine::Swap => {
+            let a = stack.pop().expect("Type checking failed");
+            let b = stack.pop().expect("Type checking failed");
+            stack.push(a);
+            stack.push(b);
         },
     }
 }
@@ -64,13 +75,23 @@ impl RoutineSigniture {
         }
     }
 
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
     pub(crate) fn from_intrinsic(routine: IntrinsicRoutine) -> Self {
         match routine {
             IntrinsicRoutine::AddI32 => Self { inputs: vec![Type::I32, Type::I32].into_boxed_slice(), outputs: vec![Type::I32].into_boxed_slice(), name: "add".to_owned()},
             IntrinsicRoutine::MinusI32 => Self { inputs: vec![Type::I32, Type::I32].into_boxed_slice(), outputs: vec![Type::I32].into_boxed_slice(), name: "minus".to_owned()},
-            IntrinsicRoutine::PrintChar => Self { inputs: vec![Type::Char].into_boxed_slice(), outputs: Vec::new().into_boxed_slice(), name: "printc".to_owned()},
-            IntrinsicRoutine::PrintString => Self { inputs: vec![Type::String].into_boxed_slice(), outputs: Vec::new().into_boxed_slice(), name: "prints".to_owned()},
+            IntrinsicRoutine::Print=> Self { inputs: vec![Type::Generic { name: "A".to_owned()}].into_boxed_slice(), outputs: Vec::new().into_boxed_slice(), name: "print".to_owned()},
             IntrinsicRoutine::Eq => Self { inputs: vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "A".to_owned() }].into_boxed_slice(), outputs: vec![Type::Bool].into_boxed_slice(), name: "eq".to_owned()},
+            IntrinsicRoutine::Not => Self { inputs: vec![Type::Bool].into_boxed_slice(), outputs: vec![Type::Bool].into_boxed_slice(), name: "not".to_owned()},
+            IntrinsicRoutine::Clone => Self { inputs: vec![Type::Generic { name: "A".to_owned() }].into_boxed_slice(), outputs: vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "A".to_owned() }].into_boxed_slice(), name: "clone".to_owned()},
+            IntrinsicRoutine::Swap => Self {
+                inputs: vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "B".to_owned() }].into_boxed_slice(),
+                outputs: vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "B".to_owned() }].into_boxed_slice(),
+                name: "swap".to_owned()
+            },
         }
     }
 
@@ -87,9 +108,11 @@ impl RoutineSigniture {
 pub(crate) enum IntrinsicRoutine {
     AddI32,
     MinusI32,
-    PrintChar,
-    PrintString,
+    Print,
     Eq,
+    Not,
+    Clone,
+    Swap,
 }
 
 #[cfg(test)]
@@ -127,8 +150,8 @@ mod tests {
         // todo: test std::out
         let mut stack = Stack::from_values(&vec![Value::Char('a')]);
         let routine = Routine::Intrinsic {
-            signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar),
-            routine: IntrinsicRoutine::PrintChar
+            signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
+            routine: IntrinsicRoutine::Print
         };
         run_routine(&routine, &mut stack);
         let expected_stack = Stack::new();
@@ -139,8 +162,8 @@ mod tests {
     fn test_print_string() {
         let mut stack = Stack::from_values(&vec![Value::String("Hello World!".to_owned())]);
         let routine = Routine::Intrinsic {
-            signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintString),
-            routine: IntrinsicRoutine::PrintString,
+            signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
+            routine: IntrinsicRoutine::Print,
         };
         run_routine(&routine, &mut stack);
         let expected_stack = Stack::new();

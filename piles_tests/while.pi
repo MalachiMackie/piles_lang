@@ -1,0 +1,5 @@
+10 !clone 0 !eq !not while {
+	!clone !print
+	1 !swap	!minus
+	!clone 0 !eq !not
+}

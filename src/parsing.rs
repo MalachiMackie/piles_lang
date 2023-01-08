@@ -17,6 +17,7 @@ enum TokenType {
     OpenBlock,
     CloseBlock,
     If,
+    While,
 }
 
 #[derive(Debug, PartialEq)]
@@ -44,6 +45,20 @@ impl<'a> Parser<Chars<'a>> {
         }
     }
 
+    fn get_tokens(&mut self) -> Result<Box<[Token]>, ParseError> {
+        let mut tokens = Vec::new();
+        while let Some(result) = self.next() {
+            let token = result?;
+            if let Token::Block(position, Block::Close { open_position }) = token {
+                if let Some(Token::Block(_, Block::Open { close_position})) = tokens.get_mut(open_position) {
+                    *close_position = position;
+                }
+            }
+            tokens.push(token);
+        }
+        Ok(tokens.into_boxed_slice())
+    }
+
     fn next(&mut self) -> Option<Result<Token, ParseError>> {
         let mut current_part = Vec::new();
         // todo: add all values
@@ -56,6 +71,7 @@ impl<'a> Parser<Chars<'a>> {
             TokenType::OpenBlock,
             TokenType::CloseBlock,
             TokenType::If,
+            TokenType::While,
         ];
         let mut token_type = None;
         let mut delimeter: &dyn Fn(char) -> bool = &char::is_whitespace;
@@ -92,7 +108,7 @@ impl<'a> Parser<Chars<'a>> {
             TokenType::ConstantBool => Some(parse_bool(string_value.trim(), token_number)),
             TokenType::OpenBlock => {
                 self.block_stack.push(token_number);
-                Some(Ok(Token::Block(token_number, Block::Open)))
+                Some(Ok(Token::Block(token_number, Block::Open { close_position: 0 })))
             },
             TokenType::CloseBlock => {
                 if let Some(open_position) = self.block_stack.pop() {
@@ -102,6 +118,7 @@ impl<'a> Parser<Chars<'a>> {
                 }
             },
             TokenType::If => Some(Ok(Token::If(token_number))),
+            TokenType::While => Some(Ok(Token::While(token_number))),
             TokenType::Routine => Some(parse_routine(string_value.trim(), token_number)),
         }
     }
@@ -143,6 +160,11 @@ fn evaluate_possible_tokens(value: &str, current_possibilities: &mut Vec<TokenTy
             current_possibilities.remove(found_index);
         }
     }
+    if !"while".starts_with(value) {
+        if let Some(found_index) = current_possibilities.iter().position(|p| p == &TokenType::While) {
+            current_possibilities.remove(found_index);
+        }
+    }
     const true_str: &str = "true";
     const false_str: &str = "false";
     if let Some(found_index) = current_possibilities.iter().position(|p| p == &TokenType::ConstantBool) {
@@ -174,9 +196,11 @@ fn parse_routine(value: &str, token_number: usize) -> Result<Token, ParseError> 
     match value {
         "!add" => Ok(Token::Routine(token_number, Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::AddI32), routine: IntrinsicRoutine::AddI32})),
         "!minus" => Ok(Token::Routine(token_number, Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::MinusI32), routine: IntrinsicRoutine::MinusI32})),
-        "!printc" => Ok(Token::Routine(token_number, Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar), routine: IntrinsicRoutine::PrintChar})),
-        "!prints" => Ok(Token::Routine(token_number, Routine::Intrinsic{ signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintString), routine: IntrinsicRoutine::PrintString})),
+        "!print" => Ok(Token::Routine(token_number, Routine::Intrinsic{signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print), routine: IntrinsicRoutine::Print})),
         "!eq" => Ok(Token::Routine(token_number, Routine::Intrinsic { signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Eq), routine: IntrinsicRoutine::Eq})),
+        "!not" => Ok(Token::Routine(token_number, Routine::Intrinsic { signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Not), routine: IntrinsicRoutine::Not})),
+        "!clone" => Ok(Token::Routine(token_number, Routine::Intrinsic { signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Clone), routine: IntrinsicRoutine::Clone})),
+        "!swap" => Ok(Token::Routine(token_number, Routine::Intrinsic { signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Swap), routine: IntrinsicRoutine::Swap})),
         _ => Err(ParseError::InvalidRoutine),
     }
 }
@@ -225,14 +249,7 @@ fn parse_bool(value: &str, token_number: usize) -> Result<Token, ParseError> {
 
 pub(crate) fn parse_input(input: &str) -> Result<Box<[Token]>, ParseError> {
     let mut parser = Parser::new(input);
-    let mut tokens = Vec::new();
-
-    while let Some(result) = parser.next() {
-        let token = result?;
-        tokens.push(token);
-    }
-    
-    Ok(tokens.into_boxed_slice())
+    parser.get_tokens()
 }
 
 #[cfg(test)]
@@ -302,42 +319,42 @@ mod tests {
                             Token::Constant(0, Value::String("some string".to_owned())),
                        ]),
             test_input("string then routine",
-                       r#""Hello World!" !prints"#,
+                       r#""Hello World!" !print"#,
                        &vec![
                             Token::Constant(0, Value::String("Hello World!".to_owned())),
                             Token::Routine(1, Routine::Intrinsic {
-                                signiture: RoutineSigniture::new("prints",
-                                                                 &vec![Type::String],
+                                signiture: RoutineSigniture::new("print",
+                                                                 &vec![Type::Generic { name: "A".to_owned()}],
                                                                  &Vec::new()),
-                                routine: IntrinsicRoutine::PrintString,
+                                routine: IntrinsicRoutine::Print,
                             }),
                        ]),
             test_input("block",
                        "{ }",
                        &vec![
-                            Token::Block(0, Block::Open),
+                            Token::Block(0, Block::Open { close_position: 1 }),
                             Token::Block(1, Block::Close { open_position: 0 }),
                        ]),
             test_input("nested block",
                        "{ { } }",
                        &vec![
-                            Token::Block(0, Block::Open),
-                            Token::Block(1, Block::Open),
+                            Token::Block(0, Block::Open { close_position: 3 }),
+                            Token::Block(1, Block::Open { close_position: 2 }),
                             Token::Block(2, Block::Close { open_position: 1 }),
                             Token::Block(3, Block::Close { open_position: 0 }),
                        ]),
             test_input("if block",
                        r"true if {
-                            'a' !printc
+                            'a' !print
                         }",
                         &vec![
                             Token::Constant(0, Value::Bool(true)),
                             Token::If(1),
-                            Token::Block(2, Block::Open),
+                            Token::Block(2, Block::Open { close_position: 5 }),
                             Token::Constant(3, Value::Char('a')),
                             Token::Routine(4, Routine::Intrinsic {
-                                signiture: RoutineSigniture::new("printc", &vec![Type::Char], &Vec::new()),
-                                routine: IntrinsicRoutine::PrintChar
+                                signiture: RoutineSigniture::new("print", &vec![Type::Generic { name: "A".to_owned() }], &Vec::new()),
+                                routine: IntrinsicRoutine::Print
                             }),
                             Token::Block(5, Block::Close { open_position: 2 }),
                         ]),

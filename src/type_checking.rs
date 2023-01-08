@@ -14,61 +14,55 @@ pub(crate) enum TypeCheckError {
 }
 
 pub(crate) fn type_check(tokens: &[Token]) -> Result<(), TypeCheckError> {
-    let mut type_stacks = vec![Vec::new()];
-    let mut block_stack = VecDeque::new();
-    let mut after_if = false;
+    let mut type_stack = Vec::new();
+    let mut block_stack = Vec::new();
+    let mut after_condition_checker = false;
     for token in tokens.iter() {
-        if after_if && !matches!(&token, Token::Block(_, Block::Open)) {
+        if after_condition_checker && !matches!(&token, Token::Block(_, Block::Open { close_position: _ })) {
             return Err(TypeCheckError::IfNotBeforeBlock);
         }
-        after_if = false;
+        after_condition_checker = false;
         match token {
             Token::Constant(_, Value::I32(_)) => {
-                let Some(type_stack) = type_stacks.last_mut() else {
-                    panic!("Missing type stack");
-                };
                 type_stack.push(Type::I32)
             },
             Token::Constant(_, Value::Char(_)) => {
-                let Some(type_stack) = type_stacks.last_mut() else {
-                    panic!("Missing type stack");
-                };
                 type_stack.push(Type::Char);
             },
             Token::Constant(_, Value::String(_)) => {
-                let Some(type_stack) = type_stacks.last_mut() else {
-                    panic!("Missing type stack");
-                };
                 type_stack.push(Type::String);
             },
             Token::Constant(_, Value::Bool(_)) => {
-                let Some(type_stack) = type_stacks.last_mut() else {
-                    panic!("Missing type stack");
-                };
                 type_stack.push(Type::Bool);
             },
-            Token::Block(position, Block::Open) => {
-                block_stack.push_back(position);
-                type_stacks.push(Vec::new());
+            Token::Block(position, Block::Open { close_position }) => {
+                block_stack.push((position, type_stack.clone()));
             },
-            Token::Block(_, Block::Close { open_position }) => {
-                let Some(open_block) = block_stack.pop_back() else {
+            Token::Block(position, Block::Close { open_position }) => {
+                let Some((open_block, mut open_stack_state)) = block_stack.pop() else {
                     return Err(TypeCheckError::MissingOpenBlock);
                 };
                 if open_block != open_position {
                     return Err(TypeCheckError::ClosingIncorrectBlock);
                 }
-                if let Some(top_stack) = type_stacks.pop() {
-                    if !top_stack.is_empty() {
-                        return Err(TypeCheckError::NonEmptyStackAfterBlock);
-                    }
+                if let Token::While(_) = &tokens[open_position - 1] {
+                    // while loop expects a bool at the top
+                    open_stack_state.push(Type::Bool);
+                }
+                if type_stack != open_stack_state {
+                    return Err(TypeCheckError::NonEmptyStackAfterBlock);
                 }
             },
             Token::If(_) => {
-                after_if = true;
-                let Some(type_stack) = type_stacks.last_mut() else {
-                    panic!("Missing type stack");
-                };
+                after_condition_checker = true;
+                match type_stack.pop() {
+                    None => return Err(TypeCheckError::NotEnoughItems),
+                    Some(Type::Bool) => (),
+                    _ => return Err(TypeCheckError::IncorrectType),
+                }
+            },
+            Token::While(_) => {
+                after_condition_checker = true;
                 match type_stack.pop() {
                     None => return Err(TypeCheckError::NotEnoughItems),
                     Some(Type::Bool) => (),
@@ -76,9 +70,6 @@ pub(crate) fn type_check(tokens: &[Token]) -> Result<(), TypeCheckError> {
                 }
             },
             Token::Routine(_, Routine::Intrinsic{signiture, routine: _}) => {
-                let Some(type_stack) = type_stacks.last_mut() else {
-                    panic!("Missing type stack");
-                };
                 let mut generic_types: HashMap<String, Type> = HashMap::new();
                 for input in signiture.inputs() {
                     let top = match type_stack.pop() {
@@ -185,37 +176,14 @@ mod tests {
     fn block_succeeds() {
         let tokens = [
             Token::Constant(0, Value::I32(10)),
-            Token::Block(1, Block::Open),
+            Token::Block(1, Block::Open { close_position: 4 }),
             Token::Constant(2, Value::Char('a')),
             Token::Routine(3, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar),
-                routine: IntrinsicRoutine::PrintChar,
+                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
+                routine: IntrinsicRoutine::Print,
             }),
             Token::Block(4, Block::Close { open_position: 1 }),
             Token::Constant(5, Value::String("Hello World".to_owned())),
-        ];
-        let result = type_check(&tokens);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn empty_block() {
-        let tokens = [
-            Token::Block(0, Block::Open),
-            Token::Block(1, Block::Close { open_position: 0 }),
-        ];
-        let result = type_check(&tokens);
-        assert!(result.is_ok());
-    }
-
-
-    #[test]
-    fn nested_blocks() {
-        let tokens = [
-            Token::Block(0, Block::Open),
-            Token::Block(1, Block::Open),
-            Token::Block(2, Block::Close { open_position: 1 }),
-            Token::Block(3, Block::Close { open_position: 0 }),
         ];
         let result = type_check(&tokens);
         assert!(result.is_ok());
@@ -233,7 +201,7 @@ mod tests {
     #[test]
     fn missing_closing_block() {
         let tokens = [
-            Token::Block(0, Block::Open),
+            Token::Block(0, Block::Open { close_position: 0 }),
         ];
         let result = type_check(&tokens);
         assert!(matches!(result, Err(TypeCheckError::MissingCloseBlock)));
@@ -242,8 +210,8 @@ mod tests {
     #[test]
     fn closing_incorrect_open_block() {
         let tokens = [
-            Token::Block(0, Block::Open),
-            Token::Block(1, Block::Open),
+            Token::Block(0, Block::Open { close_position: 2 }),
+            Token::Block(1, Block::Open { close_position: 3 }),
             Token::Block(2, Block::Close { open_position: 0 }),
             Token::Block(3, Block::Close { open_position: 1 }),
         ];
@@ -254,9 +222,11 @@ mod tests {
     #[test]
     fn block_leaves_items_on_the_stack() {
         let tokens = [
-            Token::Block(0, Block::Open),
-            Token::Constant(1, Value::I32(10)),
-            Token::Block(2, Block::Close { open_position: 0 }),
+            Token::Constant(0, Value::Bool(true)),
+            Token::If(1),
+            Token::Block(2, Block::Open { close_position: 4 }),
+            Token::Constant(3, Value::I32(10)),
+            Token::Block(4, Block::Close { open_position: 2 }),
         ];
         let result = type_check(&tokens);
         assert!(matches!(result, Err(TypeCheckError::NonEmptyStackAfterBlock)));
@@ -265,13 +235,15 @@ mod tests {
     #[test]
     fn block_consumes_items_on_stack() {
         let tokens = [
-            Token::Block(0, Block::Open),
-            Token::Constant(1, Value::Char('a')),
-            Token::Routine(2, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar),
-                routine: IntrinsicRoutine::PrintChar,
+            Token::Constant(0, Value::Bool(true)),
+            Token::If(1),
+            Token::Block(2, Block::Open { close_position: 5 }),
+            Token::Constant(3, Value::Char('a')),
+            Token::Routine(4, Routine::Intrinsic {
+                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
+                routine: IntrinsicRoutine::Print,
             }),
-            Token::Block(3, Block::Close { open_position: 0 }),
+            Token::Block(5, Block::Close { open_position: 2 }),
         ];
         let result = type_check(&tokens);
         assert!(result.is_ok());
@@ -282,7 +254,7 @@ mod tests {
         let tokens = [
             Token::Constant(0, Value::Bool(true)),
             Token::If(1),
-            Token::Block(2, Block::Open),
+            Token::Block(2, Block::Open { close_position: 3 }),
             Token::Block(3, Block::Close { open_position: 2 }),
         ];
         let result = type_check(&tokens);
@@ -294,7 +266,7 @@ mod tests {
         let tokens = [
             Token::Constant(0, Value::Char('a')),
             Token::If(1),
-            Token::Block(2, Block::Open),
+            Token::Block(2, Block::Open { close_position: 3 }),
             Token::Block(3, Block::Close { open_position: 2 }),
         ];
         let result = type_check(&tokens);
@@ -305,7 +277,7 @@ mod tests {
     fn if_empty_stack() {
         let tokens = [
             Token::If(0),
-            Token::Block(1, Block::Open),
+            Token::Block(1, Block::Open { close_position: 2 }),
             Token::Block(2, Block::Close { open_position: 1 }),
         ];
         let result = type_check(&tokens);
@@ -318,6 +290,62 @@ mod tests {
             Token::Constant(0, Value::Bool(true)),
             Token::If(1),
             Token::Constant(2, Value::I32(10)),
+        ];
+        let result = type_check(&tokens);
+        assert!(matches!(result, Err(TypeCheckError::IfNotBeforeBlock)));
+    }
+
+    #[test]
+    fn while_test() {
+        let tokens = [
+            Token::Constant(0, Value::String("This gets printed in the loop".to_owned())),
+            Token::Constant(1, Value::Bool(true)),
+            Token::While(2),
+            Token::Block(3, Block::Open { close_position: 7}),
+            Token::Routine(4, Routine::Intrinsic {
+                signiture: dbg!(RoutineSigniture::from_intrinsic(IntrinsicRoutine::Clone)),
+                routine: IntrinsicRoutine::Clone,
+            }),
+            Token::Routine(5, Routine::Intrinsic { 
+                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
+                routine: IntrinsicRoutine::Print,
+            }),
+            Token::Constant(6, Value::Bool(false)),
+            Token::Block(7, Block::Close { open_position: 3 }),
+        ];
+        let result = type_check(&tokens);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn while_fails_after_non_bool() {
+        let tokens = [
+            Token::Constant(0, Value::Char('a')),
+            Token::While(1),
+            Token::Block(2, Block::Open { close_position: 3 }),
+            Token::Block(3, Block::Close { open_position: 2 }),
+        ];
+        let result = type_check(&tokens);
+        assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
+    }
+
+    #[test]
+    fn while_empty_stack() {
+        let tokens = [
+            Token::While(0),
+            Token::Block(1, Block::Open { close_position: 2 }),
+            Token::Block(2, Block::Close { open_position: 1}),
+        ];
+        let result = type_check(&tokens);
+        assert!(matches!(result, Err(TypeCheckError::NotEnoughItems)));
+    }
+
+    #[test]
+    fn while_fails_when_not_before_block() {
+        let tokens = [
+            Token::Constant(0, Value::Bool(true)),
+            Token::While(1),
+            Token::Constant(1, Value::Bool(true)),
         ];
         let result = type_check(&tokens);
         assert!(matches!(result, Err(TypeCheckError::IfNotBeforeBlock)));
@@ -337,12 +365,12 @@ mod tests {
                 routine: IntrinsicRoutine::Eq
             }),
             Token::Routine(3, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintString),
-                routine: IntrinsicRoutine::PrintString
+                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
+                routine: IntrinsicRoutine::Print
             }),
             Token::Routine(4, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::PrintChar),
-                routine: IntrinsicRoutine::PrintChar,
+                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
+                routine: IntrinsicRoutine::Print,
             }),
         ];
         let result = type_check(&tokens);
