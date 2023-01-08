@@ -1,7 +1,7 @@
 true if {
-	"Expression is true" !prints
+	"Expression is true" !print
 }
 false if {
-	"This will not print" !prints
+	"This will not print" !print
 }
-"This will print" !prints
+"This will print" !print

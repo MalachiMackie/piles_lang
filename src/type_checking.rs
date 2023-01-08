@@ -1,4 +1,4 @@
-use crate::{Token, Routine, Value, Type, Block};
+use crate::{Token, Routine, Value, Type, Block, routines::RoutineSigniture};
 use std::collections::{VecDeque, HashMap};
 
 #[derive(Debug)]
@@ -69,8 +69,9 @@ pub(crate) fn type_check(tokens: &[Token]) -> Result<(), TypeCheckError> {
                     _ => return Err(TypeCheckError::IncorrectType),
                 }
             },
-            Token::Routine(_, Routine::Intrinsic{signiture, routine: _}) => {
+            Token::Routine(_, Routine::Intrinsic(routine)) => {
                 let mut generic_types: HashMap<String, Type> = HashMap::new();
+                let signiture = RoutineSigniture::from_intrinsic(&routine);
                 for input in signiture.inputs() {
                     let top = match type_stack.pop() {
                         Some(top) => top,
@@ -136,10 +137,7 @@ mod tests {
         let tokens = [
             Token::Constant(0, Value::I32(10)),
             Token::Constant(1, Value::I32(10)),
-            Token::Routine(2, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::AddI32),
-                routine: IntrinsicRoutine::AddI32
-            })
+            Token::Routine(2, Routine::Intrinsic(IntrinsicRoutine::AddI32))
         ];
         let result = type_check(&tokens);
         assert!(result.is_ok());
@@ -149,10 +147,7 @@ mod tests {
     fn routine_call_should_fail_when_not_enough_tokens() {
         let tokens = [
             Token::Constant(0, Value::I32(10)),
-            Token::Routine(1, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::AddI32),
-                routine: IntrinsicRoutine::AddI32
-            })
+            Token::Routine(1, Routine::Intrinsic(IntrinsicRoutine::AddI32))
         ];
         let result = type_check(&tokens);
         assert!(matches!(result, Err(TypeCheckError::NotEnoughItems)));
@@ -163,10 +158,7 @@ mod tests {
         let tokens = [
             Token::Constant(0, Value::I32(10)),
             Token::Constant(1, Value::Char('a')),
-            Token::Routine(2, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::AddI32),
-                routine: IntrinsicRoutine::AddI32,
-            })
+            Token::Routine(2, Routine::Intrinsic(IntrinsicRoutine::AddI32))
         ];
         let result = type_check(&tokens);
         assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
@@ -178,10 +170,7 @@ mod tests {
             Token::Constant(0, Value::I32(10)),
             Token::Block(1, Block::Open { close_position: 4 }),
             Token::Constant(2, Value::Char('a')),
-            Token::Routine(3, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
-                routine: IntrinsicRoutine::Print,
-            }),
+            Token::Routine(3, Routine::Intrinsic(IntrinsicRoutine::Print)),
             Token::Block(4, Block::Close { open_position: 1 }),
             Token::Constant(5, Value::String("Hello World".to_owned())),
         ];
@@ -239,10 +228,7 @@ mod tests {
             Token::If(1),
             Token::Block(2, Block::Open { close_position: 5 }),
             Token::Constant(3, Value::Char('a')),
-            Token::Routine(4, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
-                routine: IntrinsicRoutine::Print,
-            }),
+            Token::Routine(4, Routine::Intrinsic(IntrinsicRoutine::Print)),
             Token::Block(5, Block::Close { open_position: 2 }),
         ];
         let result = type_check(&tokens);
@@ -302,14 +288,8 @@ mod tests {
             Token::Constant(1, Value::Bool(true)),
             Token::While(2),
             Token::Block(3, Block::Open { close_position: 7}),
-            Token::Routine(4, Routine::Intrinsic {
-                signiture: dbg!(RoutineSigniture::from_intrinsic(IntrinsicRoutine::Clone)),
-                routine: IntrinsicRoutine::Clone,
-            }),
-            Token::Routine(5, Routine::Intrinsic { 
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
-                routine: IntrinsicRoutine::Print,
-            }),
+            Token::Routine(4, Routine::Intrinsic(IntrinsicRoutine::Clone)),
+            Token::Routine(5, Routine::Intrinsic(IntrinsicRoutine::Print)),
             Token::Constant(6, Value::Bool(false)),
             Token::Block(7, Block::Close { open_position: 3 }),
         ];
@@ -356,22 +336,10 @@ mod tests {
         let tokens = [
             Token::Constant(0, Value::String("Some String".to_owned())),
             Token::Constant(1, Value::Char('a')),
-            Token::Routine(2, Routine::Intrinsic {
-                signiture: RoutineSigniture::new(
-                    "Something",
-                    &vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "B".to_owned() }].into_boxed_slice(),
-                    &vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "B".to_owned() }].into_boxed_slice(),
-                ),
-                routine: IntrinsicRoutine::Eq
-            }),
-            Token::Routine(3, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
-                routine: IntrinsicRoutine::Print
-            }),
-            Token::Routine(4, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Print),
-                routine: IntrinsicRoutine::Print,
-            }),
+            Token::Routine(2, Routine::Intrinsic(IntrinsicRoutine::Clone)),
+            Token::Routine(2, Routine::Intrinsic(IntrinsicRoutine::Eq)),
+            Token::Routine(3, Routine::Intrinsic(IntrinsicRoutine::Print)),
+            Token::Routine(4, Routine::Intrinsic(IntrinsicRoutine::Print)),
         ];
         let result = type_check(&tokens);
         assert!(result.is_ok());
@@ -380,10 +348,7 @@ mod tests {
     #[test]
     fn generic_fail_empty_stack() {
         let tokens = [
-            Token::Routine(0, Routine::Intrinsic {
-                signiture: RoutineSigniture::from_intrinsic(IntrinsicRoutine::Eq),
-                routine: IntrinsicRoutine::Eq,
-            }),
+            Token::Routine(0, Routine::Intrinsic(IntrinsicRoutine::Eq)),
         ];
         let result = type_check(&tokens);
         assert!(matches!(result, Err(TypeCheckError::NotEnoughItems)));
@@ -394,14 +359,7 @@ mod tests {
         let tokens = [
             Token::Constant(0, Value::Char('a')),
             Token::Constant(1, Value::String("Some String".to_owned())),
-            Token::Routine(2, Routine::Intrinsic {
-                signiture: RoutineSigniture::new(
-                    "Something",
-                    &vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "A".to_owned() }].into_boxed_slice(),
-                    &Vec::new().into_boxed_slice(),
-                ),
-                routine: IntrinsicRoutine::Eq,
-            }),
+            Token::Routine(2, Routine::Intrinsic(IntrinsicRoutine::Eq)),
         ];
         let result = type_check(&tokens);
         assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
