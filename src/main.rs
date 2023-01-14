@@ -2,7 +2,7 @@ mod parsing;
 mod routines;
 mod type_checking;
 
-use routines::{run_routine, Routine};
+use routines::{run_routine, Routine, IntrinsicRoutine};
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fmt::{Display, Formatter};
@@ -43,12 +43,16 @@ fn main() {
 #[derive(Debug)]
 pub(crate) struct PileProgram {
     tokens: Box<[Token]>,
+    routines: HashMap<String, Routine>,
 }
 
 impl PileProgram {
-    fn new(tokens: &[Token]) -> Self {
+    fn new(tokens: &[Token], routines: HashMap<String, Routine>) -> Self {
+        let mut intrinsic_routines = IntrinsicRoutine::get_routine_dictionary();
+        intrinsic_routines.extend(routines);
         Self {
             tokens: tokens.to_vec().into_boxed_slice(),
+            routines: intrinsic_routines,
         }
     }
 
@@ -65,7 +69,8 @@ impl PileProgram {
                 Token::Constant(value) => {
                     stack.push(value.clone());
                 }
-                Token::Routine(routine) => {
+                Token::RoutineCall(routine_name) => {
+                    let routine = self.routines.get(routine_name).expect("type checking failed if routine is missing");
                     run_routine(&routine, &mut stack);
                 }
                 Token::Block(Block::Open { close_position }) => {}
@@ -93,7 +98,7 @@ impl PileProgram {
 #[derive(PartialEq, Debug, Clone)]
 enum Token {
     Constant(Value),
-    Routine(Routine),
+    RoutineCall(String),
     Block(Block),
     If,
     While,

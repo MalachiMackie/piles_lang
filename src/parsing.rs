@@ -50,6 +50,7 @@ impl<'a> Parser<Chars<'a>> {
 
     fn parse(&mut self) -> Result<PileProgram, ParseError> {
         let mut tokens = Vec::new();
+        let mut routines = IntrinsicRoutine::get_routine_dictionary();
         while let Some(result) = self.next(tokens.len()) {
             let token_position = tokens.len();
             let token = result?;
@@ -64,6 +65,7 @@ impl<'a> Parser<Chars<'a>> {
         }
         Ok(PileProgram {
             tokens: tokens.into_boxed_slice(),
+            routines
         })
     }
 
@@ -236,28 +238,14 @@ fn evaluate_possible_tokens(value: &str, current_possibilities: &mut Vec<TokenTy
 }
 
 fn parse_routine_call(value: &str) -> Result<Token, ParseError> {
-    // todo: add compile type checks
-    match value {
-        "!add" => Ok(Token::Routine(Routine::new_intrinsic(
-            IntrinsicRoutine::AddI32,
-        ))),
-        "!minus" => Ok(Token::Routine(Routine::new_intrinsic(
-            IntrinsicRoutine::MinusI32,
-        ))),
-        "!print" => Ok(Token::Routine(Routine::new_intrinsic(
-            IntrinsicRoutine::Print,
-        ))),
-        "!eq" => Ok(Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Eq))),
-        "!not" => Ok(Token::Routine(Routine::new_intrinsic(
-            IntrinsicRoutine::Not,
-        ))),
-        "!clone" => Ok(Token::Routine(Routine::new_intrinsic(
-            IntrinsicRoutine::Clone,
-        ))),
-        "!swap" => Ok(Token::Routine(Routine::new_intrinsic(
-            IntrinsicRoutine::Swap,
-        ))),
-        _ => Err(ParseError::InvalidRoutine),
+    if !value.starts_with('!') {
+        Err(ParseError::InvalidRoutine)
+    } else if value.len() <= 2 {
+        Err(ParseError::InvalidRoutine)
+    } else if value.chars().skip(1).filter(|c| !c.is_alphanumeric() && *c == '_').count() > 0 {
+        Err(ParseError::InvalidRoutine)
+    } else {
+        Ok(Token::RoutineCall(value[1..].to_string()))
     }
 }
 
@@ -342,8 +330,8 @@ mod tests {
             test_input(
                 "routine",
                 "!add",
-                &vec![Token::Routine(
-                    Routine::new_intrinsic(IntrinsicRoutine::AddI32),
+                &vec![Token::RoutineCall(
+                    "add".to_owned(),
                 )],
             ),
             test_input(
@@ -357,7 +345,7 @@ mod tests {
                 &vec![
                     Token::Constant(Value::I32(10)),
                     Token::Constant(Value::I32(5)),
-                    Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::MinusI32)),
+                    Token::RoutineCall("minus".to_owned()),
                     Token::Constant(Value::I32(15)),
                 ],
             ),
@@ -392,7 +380,7 @@ mod tests {
                 r#""Hello World!" !print"#,
                 &vec![
                     Token::Constant(Value::String("Hello World!".to_owned())),
-                    Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
+                    Token::RoutineCall("print".to_owned()),
                 ],
             ),
             test_input(
@@ -423,7 +411,7 @@ mod tests {
                     Token::If,
                     Token::Block(Block::Open { close_position: 5 }),
                     Token::Constant(Value::Char('a')),
-                    Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
+                    Token::RoutineCall("print".to_owned()),
                     Token::Block(Block::Close { open_position: 2 }),
                 ],
             ),

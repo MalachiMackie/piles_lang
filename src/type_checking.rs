@@ -11,6 +11,7 @@ pub(crate) enum TypeCheckError {
     NonEmptyStackAfterBlock,
     IfNotBeforeBlock,
     MissingGenericOutput,
+    MissingRoutine,
 }
 
 impl PileProgram {
@@ -71,7 +72,10 @@ impl PileProgram {
                         _ => return Err(TypeCheckError::IncorrectType),
                     }
                 }
-                Token::Routine(routine) => {
+                Token::RoutineCall(routine_name) => {
+                    let Some(routine) = self.routines.get(routine_name) else {
+                        return Err(TypeCheckError::MissingRoutine);
+                    };
                     type_check_routine(routine.signiture(), &mut type_stack)?;
                 }
             }
@@ -132,14 +136,14 @@ mod tests {
 
     #[test]
     fn empty_program_should_succeed() {
-        let program = PileProgram::new(&[]);
+        let program = PileProgram::new(&[], HashMap::new());
         let result = program.type_check();
         assert!(result.is_ok());
     }
 
     #[test]
     fn constast_pushing_should_succeed() {
-        let program = PileProgram::new(&[Token::Constant(Value::I32(10))]);
+        let program = PileProgram::new(&[Token::Constant(Value::I32(10))], HashMap::new());
         let result = program.type_check();
         assert!(result.is_ok());
     }
@@ -149,8 +153,8 @@ mod tests {
         let program = PileProgram::new(&[
             Token::Constant(Value::I32(10)),
             Token::Constant(Value::I32(10)),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::AddI32)),
-        ]);
+            Token::RoutineCall("add".to_owned()),
+        ], HashMap::new());
         let result = program.type_check();
         assert!(result.is_ok());
     }
@@ -159,14 +163,12 @@ mod tests {
     fn pile_routine_call_should_succeed() {
         let program = PileProgram::new(&[
             Token::Constant(Value::I32(10)),
-            Token::Routine(
-                Routine::Pile {
-                    signiture: RoutineSigniture::new("Something", &[Type::I32], &[Type::String]),
-                    routine: Vec::new().into_boxed_slice(),
-                },
-            ),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
-        ]);
+            Token::RoutineCall("Something".to_owned()),
+            Token::RoutineCall("print".to_owned()),
+        ], [("Something".to_owned(), Routine::Pile {
+                signiture: RoutineSigniture::new("Something", &[Type::I32], &[Type::String]),
+                routine: Vec::new().into_boxed_slice(),
+            })].into_iter().collect());
         let result = program.type_check();
         assert!(result.is_ok());
     }
@@ -175,8 +177,8 @@ mod tests {
     fn routine_call_should_fail_when_not_enough_tokens() {
         let program = PileProgram::new(&[
             Token::Constant(Value::I32(10)),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::AddI32)),
-        ]);
+            Token::RoutineCall("add".to_owned()),
+        ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::NotEnoughItems)));
     }
@@ -186,8 +188,8 @@ mod tests {
         let program = PileProgram::new(&[
             Token::Constant(Value::I32(10)),
             Token::Constant(Value::Char('a')),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::AddI32)),
-        ]);
+            Token::RoutineCall("add".to_owned()),
+        ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
     }
@@ -198,24 +200,24 @@ mod tests {
             Token::Constant(Value::I32(10)),
             Token::Block(Block::Open { close_position: 4 }),
             Token::Constant(Value::Char('a')),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
+            Token::RoutineCall("print".to_owned()),
             Token::Block(Block::Close { open_position: 1 }),
             Token::Constant(Value::String("Hello World".to_owned())),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(result.is_ok());
     }
 
     #[test]
     fn missing_opening_block() {
-        let program = PileProgram::new(&[Token::Block(Block::Close { open_position: 0 })]);
+        let program = PileProgram::new(&[Token::Block(Block::Close { open_position: 0 })], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::MissingOpenBlock)));
     }
 
     #[test]
     fn missing_closing_block() {
-        let program = PileProgram::new(&[Token::Block(Block::Open { close_position: 0 })]);
+        let program = PileProgram::new(&[Token::Block(Block::Open { close_position: 0 })], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::MissingCloseBlock)));
     }
@@ -227,7 +229,7 @@ mod tests {
             Token::Block(Block::Open { close_position: 3 }),
             Token::Block(Block::Close { open_position: 0 }),
             Token::Block(Block::Close { open_position: 1 }),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::ClosingIncorrectBlock)));
     }
@@ -240,7 +242,7 @@ mod tests {
             Token::Block(Block::Open { close_position: 4 }),
             Token::Constant(Value::I32(10)),
             Token::Block(Block::Close { open_position: 2 }),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(
             result,
@@ -255,9 +257,9 @@ mod tests {
             Token::If,
             Token::Block(Block::Open { close_position: 5 }),
             Token::Constant(Value::Char('a')),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
+            Token::RoutineCall("print".to_owned()),
             Token::Block(Block::Close { open_position: 2 }),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(result.is_ok());
     }
@@ -269,7 +271,7 @@ mod tests {
             Token::If,
             Token::Block(Block::Open { close_position: 3 }),
             Token::Block(Block::Close { open_position: 2 }),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(result.is_ok());
     }
@@ -281,7 +283,7 @@ mod tests {
             Token::If,
             Token::Block(Block::Open { close_position: 3 }),
             Token::Block(Block::Close { open_position: 2 }),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
     }
@@ -292,7 +294,7 @@ mod tests {
             Token::If,
             Token::Block(Block::Open { close_position: 2 }),
             Token::Block(Block::Close { open_position: 1 }),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::NotEnoughItems)));
     }
@@ -303,7 +305,7 @@ mod tests {
             Token::Constant(Value::Bool(true)),
             Token::If,
             Token::Constant(Value::I32(10)),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IfNotBeforeBlock)));
     }
@@ -315,11 +317,11 @@ mod tests {
             Token::Constant(Value::Bool(true)),
             Token::While,
             Token::Block(Block::Open { close_position: 7 }),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Clone)),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
+            Token::RoutineCall("clone".to_owned()),
+            Token::RoutineCall("print".to_owned()),
             Token::Constant(Value::Bool(false)),
             Token::Block(Block::Close { open_position: 3 }),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(result.is_ok());
     }
@@ -331,7 +333,7 @@ mod tests {
             Token::While,
             Token::Block(Block::Open { close_position: 3 }),
             Token::Block(Block::Close { open_position: 2 }),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
     }
@@ -342,7 +344,7 @@ mod tests {
             Token::While,
             Token::Block(Block::Open { close_position: 2 }),
             Token::Block(Block::Close { open_position: 1 }),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::NotEnoughItems)));
     }
@@ -353,7 +355,7 @@ mod tests {
             Token::Constant(Value::Bool(true)),
             Token::While,
             Token::Constant(Value::Bool(true)),
-        ]);
+        ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IfNotBeforeBlock)));
     }
@@ -363,20 +365,20 @@ mod tests {
         let program = PileProgram::new(&[
             Token::Constant(Value::String("Some String".to_owned())),
             Token::Constant(Value::Char('a')),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Clone)),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Eq)),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
-        ]);
+            Token::RoutineCall("clone".to_owned()),
+            Token::RoutineCall("eq".to_owned()),
+            Token::RoutineCall("print".to_owned()),
+            Token::RoutineCall("print".to_owned()),
+        ], HashMap::new());
         let result = program.type_check();
         assert!(result.is_ok());
     }
 
     #[test]
     fn generic_fail_empty_stack() {
-        let program = PileProgram::new(&[Token::Routine(
-            Routine::new_intrinsic(IntrinsicRoutine::Eq),
-        )]);
+        let program = PileProgram::new(&[Token::RoutineCall(
+            "eq".to_owned()
+        )], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::NotEnoughItems)));
     }
@@ -386,8 +388,8 @@ mod tests {
         let program = PileProgram::new(&[
             Token::Constant(Value::Char('a')),
             Token::Constant(Value::String("Some String".to_owned())),
-            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Eq)),
-        ]);
+            Token::RoutineCall("eq".to_owned()),
+        ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
     }

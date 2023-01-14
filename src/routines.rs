@@ -1,4 +1,5 @@
 use crate::{Stack, Token, Type, Value};
+use std::collections::HashMap;
 
 pub(crate) fn run_routine(routine: &Routine, stack: &mut Stack) {
     debug_assert!(routine.signiture().inputs.len() <= stack.len());
@@ -215,6 +216,23 @@ pub(crate) enum IntrinsicRoutine {
     Not,
     Clone,
     Swap,
+}
+
+impl IntrinsicRoutine {
+    pub(crate) fn get_routine_dictionary() -> HashMap<String, Routine> {
+        let intrinsics = [
+            Routine::new_intrinsic(IntrinsicRoutine::AddI32),
+            Routine::new_intrinsic(IntrinsicRoutine::Print),
+            Routine::new_intrinsic(IntrinsicRoutine::Eq),
+            Routine::new_intrinsic(IntrinsicRoutine::Not),
+            Routine::new_intrinsic(IntrinsicRoutine::Clone),
+            Routine::new_intrinsic(IntrinsicRoutine::Swap),
+        ];
+
+        intrinsics.into_iter()
+            .map(|routine| (routine.signiture().name.clone(), routine))
+            .collect()
+    }
 }
 
 #[cfg(test)]
