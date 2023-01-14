@@ -1,6 +1,6 @@
 use crate::{
     routines::{IntrinsicRoutine, Routine, RoutineSigniture},
-    Block, Token, Type, Value, PileProgram
+    Block, PileProgram, Token, Type, Value,
 };
 use std::str::Chars;
 
@@ -120,15 +120,11 @@ impl<'a> Parser<Chars<'a>> {
             TokenType::ConstantBool => Some(parse_bool(string_value.trim())),
             TokenType::OpenBlock => {
                 self.block_stack.push(token_number);
-                Some(Ok(Token::Block(
-                    Block::Open { close_position: 0 },
-                )))
+                Some(Ok(Token::Block(Block::Open { close_position: 0 })))
             }
             TokenType::CloseBlock => {
                 if let Some(open_position) = self.block_stack.pop() {
-                    Some(Ok(Token::Block(
-                        Block::Close { open_position },
-                    )))
+                    Some(Ok(Token::Block(Block::Close { open_position })))
                 } else {
                     Some(Err(ParseError::MissingOpenBlock))
                 }
@@ -242,27 +238,25 @@ fn evaluate_possible_tokens(value: &str, current_possibilities: &mut Vec<TokenTy
 fn parse_routine_call(value: &str) -> Result<Token, ParseError> {
     // todo: add compile type checks
     match value {
-        "!add" => Ok(Token::Routine(
-            Routine::new_intrinsic(IntrinsicRoutine::AddI32),
-        )),
-        "!minus" => Ok(Token::Routine(
-            Routine::new_intrinsic(IntrinsicRoutine::MinusI32),
-        )),
-        "!print" => Ok(Token::Routine(
-            Routine::new_intrinsic(IntrinsicRoutine::Print),
-        )),
-        "!eq" => Ok(Token::Routine(
-            Routine::new_intrinsic(IntrinsicRoutine::Eq),
-        )),
-        "!not" => Ok(Token::Routine(
-            Routine::new_intrinsic(IntrinsicRoutine::Not),
-        )),
-        "!clone" => Ok(Token::Routine(
-            Routine::new_intrinsic(IntrinsicRoutine::Clone),
-        )),
-        "!swap" => Ok(Token::Routine(
-            Routine::new_intrinsic(IntrinsicRoutine::Swap),
-        )),
+        "!add" => Ok(Token::Routine(Routine::new_intrinsic(
+            IntrinsicRoutine::AddI32,
+        ))),
+        "!minus" => Ok(Token::Routine(Routine::new_intrinsic(
+            IntrinsicRoutine::MinusI32,
+        ))),
+        "!print" => Ok(Token::Routine(Routine::new_intrinsic(
+            IntrinsicRoutine::Print,
+        ))),
+        "!eq" => Ok(Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Eq))),
+        "!not" => Ok(Token::Routine(Routine::new_intrinsic(
+            IntrinsicRoutine::Not,
+        ))),
+        "!clone" => Ok(Token::Routine(Routine::new_intrinsic(
+            IntrinsicRoutine::Clone,
+        ))),
+        "!swap" => Ok(Token::Routine(Routine::new_intrinsic(
+            IntrinsicRoutine::Swap,
+        ))),
         _ => Err(ParseError::InvalidRoutine),
     }
 }
@@ -298,9 +292,9 @@ fn parse_string(value: &str) -> Result<Token, ParseError> {
         return Err(ParseError::StringMissingClosingQuote);
     }
     let len = rest.len();
-    Ok(Token::Constant(
-        Value::String(rest.into_iter().take(len - 1).collect::<String>()),
-    ))
+    Ok(Token::Constant(Value::String(
+        rest.into_iter().take(len - 1).collect::<String>(),
+    )))
 }
 
 fn parse_bool(value: &str) -> Result<Token, ParseError> {
@@ -322,8 +316,8 @@ impl PileProgram {
 mod tests {
     use super::*;
     fn test_input(description: &str, input: &str, expected_tokens: &[Token]) -> Result<(), String> {
-        let parsed =
-            PileProgram::parse(input).map_err(|e| format!(r#"test "{}" failed: {:?}"#, description, e))?;
+        let parsed = PileProgram::parse(input)
+            .map_err(|e| format!(r#"test "{}" failed: {:?}"#, description, e))?;
         if parsed.tokens.as_ref() != expected_tokens {
             Err(format!(
                 "Expected {:?}, found {:?}",
