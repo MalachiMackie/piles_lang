@@ -1,10 +1,15 @@
-use crate::{Type, Stack, Value};
+use crate::{Type, Stack, Value, Token};
 
 pub(crate) fn run_routine(routine: &Routine, stack: &mut Stack) {
    debug_assert!(routine.signiture().inputs.len() <= stack.len());
    match routine {
-       Routine::Intrinsic(routine) => run_intrinsic_routine(routine, stack),
+       Routine::Intrinsic { signiture: _, routine } => run_intrinsic_routine(routine, stack),
+       Routine::Pile { signiture: _, routine } => run_pile_routine(routine, stack),
    }
+}
+
+fn run_pile_routine(routine: &[Token], stack: &mut Stack) {
+    todo!()
 }
 
 fn run_intrinsic_routine(routine: &IntrinsicRoutine, stack: &mut Stack) {
@@ -48,13 +53,22 @@ fn run_intrinsic_routine(routine: &IntrinsicRoutine, stack: &mut Stack) {
 
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) enum Routine {
-    Intrinsic(IntrinsicRoutine),
+    Pile { signiture: RoutineSigniture, routine: Box<[Token]> },
+    Intrinsic { signiture: RoutineSigniture, routine: IntrinsicRoutine },
 }
 
 impl Routine {
-    pub(crate) fn signiture(&self) -> RoutineSigniture {
+    pub(crate) fn signiture(&self) -> &RoutineSigniture {
         match self {
-            Routine::Intrinsic(intrinsic_routine) => RoutineSigniture::from_intrinsic(intrinsic_routine),
+            Routine::Intrinsic { signiture, routine: _} |
+                Routine::Pile { signiture, routine: _ } => signiture,
+        }
+    }
+
+    pub(crate) fn new_intrinsic(routine: IntrinsicRoutine) -> Self {
+        Self::Intrinsic {
+            signiture: RoutineSigniture::from_intrinsic(&routine),
+            routine,
         }
     }
 }
@@ -123,14 +137,14 @@ mod tests {
     #[should_panic]
     fn run_routine_should_panic_when_stack_doesnt_have_enough_items() {
         let mut stack = Stack::from_values(&vec![Value::I32(10)]);
-        let routine = Routine::Intrinsic(IntrinsicRoutine::AddI32);
+        let routine = Routine::new_intrinsic(IntrinsicRoutine::AddI32);
         run_routine(&routine, &mut stack);
     }
 
     #[test]
     fn test_add() {
         let mut stack = Stack::from_values(&vec![Value::I32(10), Value::I32(15)]);
-        let routine = Routine::Intrinsic(IntrinsicRoutine::AddI32); 
+        let routine = Routine::new_intrinsic(IntrinsicRoutine::AddI32); 
         run_routine(&routine, &mut stack);
         let expected_stack = Stack::from_values(&vec![Value::I32(25)]);
         assert_eq!(stack, expected_stack);
@@ -139,7 +153,7 @@ mod tests {
     #[test]
     fn test_minus() {
         let mut stack = Stack::from_values(&vec![Value::I32(10), Value::I32(25)]);
-        let routine = Routine::Intrinsic(IntrinsicRoutine::MinusI32);
+        let routine = Routine::new_intrinsic(IntrinsicRoutine::MinusI32);
         run_routine(&routine, &mut stack);
         let expected_stack = Stack::from_values(&vec![Value::I32(15)]);
         assert_eq!(stack, expected_stack);
@@ -149,7 +163,7 @@ mod tests {
     fn test_print_char() {
         // todo: test std::out
         let mut stack = Stack::from_values(&vec![Value::Char('a')]);
-        let routine = Routine::Intrinsic(IntrinsicRoutine::Print);
+        let routine = Routine::new_intrinsic(IntrinsicRoutine::Print);
         run_routine(&routine, &mut stack);
         let expected_stack = Stack::new();
         assert_eq!(stack, expected_stack);
@@ -158,7 +172,7 @@ mod tests {
     #[test]
     fn test_print_string() {
         let mut stack = Stack::from_values(&vec![Value::String("Hello World!".to_owned())]);
-        let routine = Routine::Intrinsic(IntrinsicRoutine::Print);
+        let routine = Routine::new_intrinsic(IntrinsicRoutine::Print);
         run_routine(&routine, &mut stack);
         let expected_stack = Stack::new();
         assert_eq!(stack, expected_stack);
