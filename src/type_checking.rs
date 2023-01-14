@@ -195,6 +195,15 @@ mod tests {
     }
 
     #[test]
+    fn missing_routine() {
+        let program = PileProgram::new(&[
+            Token::RoutineCall("missing_fn".to_owned()),
+        ], HashMap::new());
+        let result = program.type_check();
+        assert!(matches!(result, Err(TypeCheckError::MissingRoutine)));
+    }
+
+    #[test]
     fn block_succeeds() {
         let program = PileProgram::new(&[
             Token::Constant(Value::I32(10)),
