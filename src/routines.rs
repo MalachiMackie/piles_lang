@@ -1,11 +1,17 @@
-use crate::{Type, Stack, Value, Token};
+use crate::{Stack, Token, Type, Value};
 
 pub(crate) fn run_routine(routine: &Routine, stack: &mut Stack) {
-   debug_assert!(routine.signiture().inputs.len() <= stack.len());
-   match routine {
-       Routine::Intrinsic { signiture: _, routine } => run_intrinsic_routine(routine, stack),
-       Routine::Pile { signiture: _, routine } => run_pile_routine(routine, stack),
-   }
+    debug_assert!(routine.signiture().inputs.len() <= stack.len());
+    match routine {
+        Routine::Intrinsic {
+            signiture: _,
+            routine,
+        } => run_intrinsic_routine(routine, stack),
+        Routine::Pile {
+            signiture: _,
+            routine,
+        } => run_pile_routine(routine, stack),
+    }
 }
 
 fn run_pile_routine(routine: &[Token], stack: &mut Stack) {
@@ -18,50 +24,62 @@ fn run_intrinsic_routine(routine: &IntrinsicRoutine, stack: &mut Stack) {
             let a = stack.pop_i32().expect("Type checking failed");
             let b = stack.pop_i32().expect("Type checking failed");
             stack.push(Value::I32(a + b));
-        },
+        }
         IntrinsicRoutine::MinusI32 => {
             let a = stack.pop_i32().expect("Type checking failed");
             let b = stack.pop_i32().expect("Type checking failed");
             stack.push(Value::I32(a - b));
-        },
-        IntrinsicRoutine::Print=> {
+        }
+        IntrinsicRoutine::Print => {
             let a = stack.pop().expect("Type checking failed");
             println!("{}", a);
-        },
+        }
         IntrinsicRoutine::Eq => {
             let a = stack.pop().expect("Type checking failed");
             let b = stack.pop().expect("Type checking failed");
             stack.push(Value::Bool(a == b));
-        },
+        }
         IntrinsicRoutine::Not => {
             let a = stack.pop_bool().expect("Type checking_failed");
             stack.push(Value::Bool(!a));
-        },
+        }
         IntrinsicRoutine::Clone => {
             let a = stack.pop().expect("Type checking failed");
             stack.push(a.clone());
             stack.push(a);
-        },
+        }
         IntrinsicRoutine::Swap => {
             let a = stack.pop().expect("Type checking failed");
             let b = stack.pop().expect("Type checking failed");
             stack.push(a);
             stack.push(b);
-        },
+        }
     }
 }
 
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) enum Routine {
-    Pile { signiture: RoutineSigniture, routine: Box<[Token]> },
-    Intrinsic { signiture: RoutineSigniture, routine: IntrinsicRoutine },
+    Pile {
+        signiture: RoutineSigniture,
+        routine: Box<[Token]>,
+    },
+    Intrinsic {
+        signiture: RoutineSigniture,
+        routine: IntrinsicRoutine,
+    },
 }
 
 impl Routine {
     pub(crate) fn signiture(&self) -> &RoutineSigniture {
         match self {
-            Routine::Intrinsic { signiture, routine: _} |
-                Routine::Pile { signiture, routine: _ } => signiture,
+            Routine::Intrinsic {
+                signiture,
+                routine: _,
+            }
+            | Routine::Pile {
+                signiture,
+                routine: _,
+            } => signiture,
         }
     }
 
@@ -84,8 +102,16 @@ impl RoutineSigniture {
     pub(crate) fn new(name: &str, inputs: &[Type], outputs: &[Type]) -> Self {
         Self {
             name: name.to_owned(),
-            inputs: inputs.iter().cloned().collect::<Vec<_>>().into_boxed_slice(),
-            outputs: outputs.iter().cloned().collect::<Vec<_>>().into_boxed_slice(),
+            inputs: inputs
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            outputs: outputs
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
         }
     }
 
@@ -95,16 +121,78 @@ impl RoutineSigniture {
 
     pub(crate) fn from_intrinsic(routine: &IntrinsicRoutine) -> Self {
         match routine {
-            IntrinsicRoutine::AddI32 => Self { inputs: vec![Type::I32, Type::I32].into_boxed_slice(), outputs: vec![Type::I32].into_boxed_slice(), name: "add".to_owned()},
-            IntrinsicRoutine::MinusI32 => Self { inputs: vec![Type::I32, Type::I32].into_boxed_slice(), outputs: vec![Type::I32].into_boxed_slice(), name: "minus".to_owned()},
-            IntrinsicRoutine::Print=> Self { inputs: vec![Type::Generic { name: "A".to_owned()}].into_boxed_slice(), outputs: Vec::new().into_boxed_slice(), name: "print".to_owned()},
-            IntrinsicRoutine::Eq => Self { inputs: vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "A".to_owned() }].into_boxed_slice(), outputs: vec![Type::Bool].into_boxed_slice(), name: "eq".to_owned()},
-            IntrinsicRoutine::Not => Self { inputs: vec![Type::Bool].into_boxed_slice(), outputs: vec![Type::Bool].into_boxed_slice(), name: "not".to_owned()},
-            IntrinsicRoutine::Clone => Self { inputs: vec![Type::Generic { name: "A".to_owned() }].into_boxed_slice(), outputs: vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "A".to_owned() }].into_boxed_slice(), name: "clone".to_owned()},
+            IntrinsicRoutine::AddI32 => Self {
+                inputs: vec![Type::I32, Type::I32].into_boxed_slice(),
+                outputs: vec![Type::I32].into_boxed_slice(),
+                name: "add".to_owned(),
+            },
+            IntrinsicRoutine::MinusI32 => Self {
+                inputs: vec![Type::I32, Type::I32].into_boxed_slice(),
+                outputs: vec![Type::I32].into_boxed_slice(),
+                name: "minus".to_owned(),
+            },
+            IntrinsicRoutine::Print => Self {
+                inputs: vec![Type::Generic {
+                    name: "A".to_owned(),
+                }]
+                .into_boxed_slice(),
+                outputs: Vec::new().into_boxed_slice(),
+                name: "print".to_owned(),
+            },
+            IntrinsicRoutine::Eq => Self {
+                inputs: vec![
+                    Type::Generic {
+                        name: "A".to_owned(),
+                    },
+                    Type::Generic {
+                        name: "A".to_owned(),
+                    },
+                ]
+                .into_boxed_slice(),
+                outputs: vec![Type::Bool].into_boxed_slice(),
+                name: "eq".to_owned(),
+            },
+            IntrinsicRoutine::Not => Self {
+                inputs: vec![Type::Bool].into_boxed_slice(),
+                outputs: vec![Type::Bool].into_boxed_slice(),
+                name: "not".to_owned(),
+            },
+            IntrinsicRoutine::Clone => Self {
+                inputs: vec![Type::Generic {
+                    name: "A".to_owned(),
+                }]
+                .into_boxed_slice(),
+                outputs: vec![
+                    Type::Generic {
+                        name: "A".to_owned(),
+                    },
+                    Type::Generic {
+                        name: "A".to_owned(),
+                    },
+                ]
+                .into_boxed_slice(),
+                name: "clone".to_owned(),
+            },
             IntrinsicRoutine::Swap => Self {
-                inputs: vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "B".to_owned() }].into_boxed_slice(),
-                outputs: vec![Type::Generic { name: "A".to_owned() }, Type::Generic { name: "B".to_owned() }].into_boxed_slice(),
-                name: "swap".to_owned()
+                inputs: vec![
+                    Type::Generic {
+                        name: "A".to_owned(),
+                    },
+                    Type::Generic {
+                        name: "B".to_owned(),
+                    },
+                ]
+                .into_boxed_slice(),
+                outputs: vec![
+                    Type::Generic {
+                        name: "A".to_owned(),
+                    },
+                    Type::Generic {
+                        name: "B".to_owned(),
+                    },
+                ]
+                .into_boxed_slice(),
+                name: "swap".to_owned(),
             },
         }
     }
@@ -144,7 +232,7 @@ mod tests {
     #[test]
     fn test_add() {
         let mut stack = Stack::from_values(&vec![Value::I32(10), Value::I32(15)]);
-        let routine = Routine::new_intrinsic(IntrinsicRoutine::AddI32); 
+        let routine = Routine::new_intrinsic(IntrinsicRoutine::AddI32);
         run_routine(&routine, &mut stack);
         let expected_stack = Stack::from_values(&vec![Value::I32(25)]);
         assert_eq!(stack, expected_stack);
