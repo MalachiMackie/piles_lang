@@ -62,20 +62,20 @@ impl PileProgram {
         while index < tokens.len() {
             let token = &tokens[index];
             match token {
-                Token::Constant(_, value) => {
+                Token::Constant(value) => {
                     stack.push(value.clone());
                 }
-                Token::Routine(_, routine) => {
+                Token::Routine(routine) => {
                     run_routine(&routine, &mut stack);
                 }
-                Token::Block(position, Block::Open { close_position }) => {}
-                Token::Block(_, Block::Close { open_position }) => {
-                    if let Token::While(while_position) = &tokens[open_position - 1] {
-                        index = while_position - 1;
+                Token::Block(Block::Open { close_position }) => {}
+                Token::Block(Block::Close { open_position }) => {
+                    if let Token::While = &tokens[open_position - 1] {
+                        index = open_position - 2;
                     }
                 }
-                Token::If(_) | Token::While(_) => {
-                    let Token::Block(_, Block::Open { close_position }) = &tokens[index + 1] else {
+                Token::If | Token::While => {
+                    let Token::Block(Block::Open { close_position }) = &tokens[index + 1] else {
                     panic!("Expected open block after if or while");
                 };
 
@@ -92,11 +92,11 @@ impl PileProgram {
 
 #[derive(PartialEq, Debug, Clone)]
 enum Token {
-    Constant(usize, Value),
-    Routine(usize, Routine),
-    Block(usize, Block),
-    If(usize),
-    While(usize),
+    Constant(Value),
+    Routine(Routine),
+    Block(Block),
+    If,
+    While,
 }
 
 #[derive(PartialEq, Debug, Clone)]

@@ -50,13 +50,14 @@ impl<'a> Parser<Chars<'a>> {
 
     fn parse(&mut self) -> Result<PileProgram, ParseError> {
         let mut tokens = Vec::new();
-        while let Some(result) = self.next() {
+        while let Some(result) = self.next(tokens.len()) {
+            let token_position = tokens.len();
             let token = result?;
-            if let Token::Block(position, Block::Close { open_position }) = token {
-                if let Some(Token::Block(_, Block::Open { close_position })) =
+            if let Token::Block(Block::Close { open_position }) = token {
+                if let Some(Token::Block(Block::Open { close_position })) =
                     tokens.get_mut(open_position)
                 {
-                    *close_position = position;
+                    *close_position = token_position;
                 }
             }
             tokens.push(token);
@@ -66,7 +67,7 @@ impl<'a> Parser<Chars<'a>> {
         })
     }
 
-    fn next(&mut self) -> Option<Result<Token, ParseError>> {
+    fn next(&mut self, token_number: usize) -> Option<Result<Token, ParseError>> {
         let mut current_part = Vec::new();
         // todo: add all values
         let mut possible_token_types = vec![
@@ -106,39 +107,35 @@ impl<'a> Parser<Chars<'a>> {
         let Some(token_type) = token_type else {
             return None;
         };
-        let token_number = self.next_token;
-        self.next_token += 1;
         match token_type {
-            TokenType::ConstantChar => Some(parse_char(string_value.trim(), token_number)),
-            TokenType::ConstantString => Some(parse_string(string_value.trim(), token_number)),
+            TokenType::ConstantChar => Some(parse_char(string_value.trim())),
+            TokenType::ConstantString => Some(parse_string(string_value.trim())),
             TokenType::ConstantI32 => Some(
                 string_value
                     .trim()
                     .parse()
-                    .map(|i32_value| Token::Constant(token_number, Value::I32(i32_value)))
+                    .map(|i32_value| Token::Constant(Value::I32(i32_value)))
                     .map_err(|e| ParseError::ParseIntError),
             ),
-            TokenType::ConstantBool => Some(parse_bool(string_value.trim(), token_number)),
+            TokenType::ConstantBool => Some(parse_bool(string_value.trim())),
             TokenType::OpenBlock => {
                 self.block_stack.push(token_number);
                 Some(Ok(Token::Block(
-                    token_number,
                     Block::Open { close_position: 0 },
                 )))
             }
             TokenType::CloseBlock => {
                 if let Some(open_position) = self.block_stack.pop() {
                     Some(Ok(Token::Block(
-                        token_number,
                         Block::Close { open_position },
                     )))
                 } else {
                     Some(Err(ParseError::MissingOpenBlock))
                 }
             }
-            TokenType::If => Some(Ok(Token::If(token_number))),
-            TokenType::While => Some(Ok(Token::While(token_number))),
-            TokenType::RoutineCall => Some(parse_routine_call(string_value.trim(), token_number)),
+            TokenType::If => Some(Ok(Token::If)),
+            TokenType::While => Some(Ok(Token::While)),
+            TokenType::RoutineCall => Some(parse_routine_call(string_value.trim())),
         }
     }
 }
@@ -242,42 +239,35 @@ fn evaluate_possible_tokens(value: &str, current_possibilities: &mut Vec<TokenTy
     }
 }
 
-fn parse_routine_call(value: &str, token_number: usize) -> Result<Token, ParseError> {
+fn parse_routine_call(value: &str) -> Result<Token, ParseError> {
     // todo: add compile type checks
     match value {
         "!add" => Ok(Token::Routine(
-            token_number,
             Routine::new_intrinsic(IntrinsicRoutine::AddI32),
         )),
         "!minus" => Ok(Token::Routine(
-            token_number,
             Routine::new_intrinsic(IntrinsicRoutine::MinusI32),
         )),
         "!print" => Ok(Token::Routine(
-            token_number,
             Routine::new_intrinsic(IntrinsicRoutine::Print),
         )),
         "!eq" => Ok(Token::Routine(
-            token_number,
             Routine::new_intrinsic(IntrinsicRoutine::Eq),
         )),
         "!not" => Ok(Token::Routine(
-            token_number,
             Routine::new_intrinsic(IntrinsicRoutine::Not),
         )),
         "!clone" => Ok(Token::Routine(
-            token_number,
             Routine::new_intrinsic(IntrinsicRoutine::Clone),
         )),
         "!swap" => Ok(Token::Routine(
-            token_number,
             Routine::new_intrinsic(IntrinsicRoutine::Swap),
         )),
         _ => Err(ParseError::InvalidRoutine),
     }
 }
 
-fn parse_char(value: &str, token_number: usize) -> Result<Token, ParseError> {
+fn parse_char(value: &str) -> Result<Token, ParseError> {
     if !value.starts_with('\'') {
         return Err(ParseError::CharMissingOpeningTick);
     } else if !value.ends_with('\'') || value.len() == 1 {
@@ -287,12 +277,12 @@ fn parse_char(value: &str, token_number: usize) -> Result<Token, ParseError> {
     // todo: allow escaping
     match (middle_chars.len(), middle_chars.first()) {
         (1, _) => Err(ParseError::CharMissingChar),
-        (2, Some(char_value)) => Ok(Token::Constant(token_number, Value::Char(*char_value))),
+        (2, Some(char_value)) => Ok(Token::Constant(Value::Char(*char_value))),
         _ => Err(ParseError::CharExtraCharacters),
     }
 }
 
-fn parse_string(value: &str, token_number: usize) -> Result<Token, ParseError> {
+fn parse_string(value: &str) -> Result<Token, ParseError> {
     println!("{}", value);
     if !value.starts_with('"') {
         return Err(ParseError::StringMissingOpeningQuote);
@@ -309,15 +299,14 @@ fn parse_string(value: &str, token_number: usize) -> Result<Token, ParseError> {
     }
     let len = rest.len();
     Ok(Token::Constant(
-        token_number,
         Value::String(rest.into_iter().take(len - 1).collect::<String>()),
     ))
 }
 
-fn parse_bool(value: &str, token_number: usize) -> Result<Token, ParseError> {
+fn parse_bool(value: &str) -> Result<Token, ParseError> {
     match value {
-        "true" => Ok(Token::Constant(token_number, Value::Bool(true))),
-        "false" => Ok(Token::Constant(token_number, Value::Bool(false))),
+        "true" => Ok(Token::Constant(Value::Bool(true))),
+        "false" => Ok(Token::Constant(Value::Bool(false))),
         _ => Err(ParseError::BoolInvalid),
     }
 }

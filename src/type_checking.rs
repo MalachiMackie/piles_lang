@@ -18,37 +18,37 @@ impl PileProgram {
 pub(crate) fn type_check(&self) -> Result<(), TypeCheckError> {
     let tokens = &self.tokens;
     let mut type_stack = Vec::new();
-    let mut block_stack = Vec::new();
+    let mut block_stack: Vec<(usize, Vec<Type>)> = Vec::new();
     let mut after_condition_checker = false;
-    for token in tokens.iter() {
+    for (index, token) in tokens.iter().enumerate() {
         if after_condition_checker
-            && !matches!(&token, Token::Block(_, Block::Open { close_position: _ }))
+            && !matches!(&token, Token::Block(Block::Open { close_position: _ }))
         {
             return Err(TypeCheckError::IfNotBeforeBlock);
         }
         after_condition_checker = false;
         match token {
-            Token::Constant(_, Value::I32(_)) => type_stack.push(Type::I32),
-            Token::Constant(_, Value::Char(_)) => {
+            Token::Constant(Value::I32(_)) => type_stack.push(Type::I32),
+            Token::Constant(Value::Char(_)) => {
                 type_stack.push(Type::Char);
             }
-            Token::Constant(_, Value::String(_)) => {
+            Token::Constant(Value::String(_)) => {
                 type_stack.push(Type::String);
             }
-            Token::Constant(_, Value::Bool(_)) => {
+            Token::Constant(Value::Bool(_)) => {
                 type_stack.push(Type::Bool);
             }
-            Token::Block(position, Block::Open { close_position }) => {
-                block_stack.push((position, type_stack.clone()));
+            Token::Block(Block::Open { close_position }) => {
+                block_stack.push((index, type_stack.clone()));
             }
-            Token::Block(position, Block::Close { open_position }) => {
+            Token::Block(Block::Close { open_position }) => {
                 let Some((open_block, mut open_stack_state)) = block_stack.pop() else {
                     return Err(TypeCheckError::MissingOpenBlock);
                 };
-                if open_block != open_position {
+                if open_block != *open_position {
                     return Err(TypeCheckError::ClosingIncorrectBlock);
                 }
-                if let Token::While(_) = &tokens[open_position - 1] {
+                if let Token::While = &tokens[open_position - 1] {
                     // while loop expects a bool at the top
                     open_stack_state.push(Type::Bool);
                 }
@@ -56,7 +56,7 @@ pub(crate) fn type_check(&self) -> Result<(), TypeCheckError> {
                     return Err(TypeCheckError::NonEmptyStackAfterBlock);
                 }
             }
-            Token::If(_) => {
+            Token::If => {
                 after_condition_checker = true;
                 match type_stack.pop() {
                     None => return Err(TypeCheckError::NotEnoughItems),
@@ -64,7 +64,7 @@ pub(crate) fn type_check(&self) -> Result<(), TypeCheckError> {
                     _ => return Err(TypeCheckError::IncorrectType),
                 }
             }
-            Token::While(_) => {
+            Token::While => {
                 after_condition_checker = true;
                 match type_stack.pop() {
                     None => return Err(TypeCheckError::NotEnoughItems),
@@ -72,7 +72,7 @@ pub(crate) fn type_check(&self) -> Result<(), TypeCheckError> {
                     _ => return Err(TypeCheckError::IncorrectType),
                 }
             }
-            Token::Routine(_, routine) => {
+            Token::Routine(routine) => {
                 type_check_routine(routine.signiture(), &mut type_stack)?;
             }
         }
