@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn constast_pushing_should_succeed() {
-        let program = PileProgram::new(&[Token::Constant(0, Value::I32(10))]);
+        let program = PileProgram::new(&[Token::Constant(Value::I32(10))]);
         let result = program.type_check();
         assert!(result.is_ok());
     }
@@ -147,9 +147,9 @@ mod tests {
     #[test]
     fn intrinsic_routine_call_should_succeed() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::I32(10)),
-            Token::Constant(1, Value::I32(10)),
-            Token::Routine(2, Routine::new_intrinsic(IntrinsicRoutine::AddI32)),
+            Token::Constant(Value::I32(10)),
+            Token::Constant(Value::I32(10)),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::AddI32)),
         ]);
         let result = program.type_check();
         assert!(result.is_ok());
@@ -158,15 +158,14 @@ mod tests {
     #[test]
     fn pile_routine_call_should_succeed() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::I32(10)),
+            Token::Constant(Value::I32(10)),
             Token::Routine(
-                1,
                 Routine::Pile {
                     signiture: RoutineSigniture::new("Something", &[Type::I32], &[Type::String]),
                     routine: Vec::new().into_boxed_slice(),
                 },
             ),
-            Token::Routine(2, Routine::new_intrinsic(IntrinsicRoutine::Print)),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
         ]);
         let result = program.type_check();
         assert!(result.is_ok());
@@ -175,8 +174,8 @@ mod tests {
     #[test]
     fn routine_call_should_fail_when_not_enough_tokens() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::I32(10)),
-            Token::Routine(1, Routine::new_intrinsic(IntrinsicRoutine::AddI32)),
+            Token::Constant(Value::I32(10)),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::AddI32)),
         ]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::NotEnoughItems)));
@@ -185,9 +184,9 @@ mod tests {
     #[test]
     fn routine_call_should_fail_when_incorrect_types() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::I32(10)),
-            Token::Constant(1, Value::Char('a')),
-            Token::Routine(2, Routine::new_intrinsic(IntrinsicRoutine::AddI32)),
+            Token::Constant(Value::I32(10)),
+            Token::Constant(Value::Char('a')),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::AddI32)),
         ]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
@@ -196,12 +195,12 @@ mod tests {
     #[test]
     fn block_succeeds() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::I32(10)),
-            Token::Block(1, Block::Open { close_position: 4 }),
-            Token::Constant(2, Value::Char('a')),
-            Token::Routine(3, Routine::new_intrinsic(IntrinsicRoutine::Print)),
-            Token::Block(4, Block::Close { open_position: 1 }),
-            Token::Constant(5, Value::String("Hello World".to_owned())),
+            Token::Constant(Value::I32(10)),
+            Token::Block(Block::Open { close_position: 4 }),
+            Token::Constant(Value::Char('a')),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
+            Token::Block(Block::Close { open_position: 1 }),
+            Token::Constant(Value::String("Hello World".to_owned())),
         ]);
         let result = program.type_check();
         assert!(result.is_ok());
@@ -209,14 +208,14 @@ mod tests {
 
     #[test]
     fn missing_opening_block() {
-        let program = PileProgram::new(&[Token::Block(0, Block::Close { open_position: 0 })]);
+        let program = PileProgram::new(&[Token::Block(Block::Close { open_position: 0 })]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::MissingOpenBlock)));
     }
 
     #[test]
     fn missing_closing_block() {
-        let program = PileProgram::new(&[Token::Block(0, Block::Open { close_position: 0 })]);
+        let program = PileProgram::new(&[Token::Block(Block::Open { close_position: 0 })]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::MissingCloseBlock)));
     }
@@ -224,10 +223,10 @@ mod tests {
     #[test]
     fn closing_incorrect_open_block() {
         let program = PileProgram::new(&[
-            Token::Block(0, Block::Open { close_position: 2 }),
-            Token::Block(1, Block::Open { close_position: 3 }),
-            Token::Block(2, Block::Close { open_position: 0 }),
-            Token::Block(3, Block::Close { open_position: 1 }),
+            Token::Block(Block::Open { close_position: 2 }),
+            Token::Block(Block::Open { close_position: 3 }),
+            Token::Block(Block::Close { open_position: 0 }),
+            Token::Block(Block::Close { open_position: 1 }),
         ]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::ClosingIncorrectBlock)));
@@ -236,11 +235,11 @@ mod tests {
     #[test]
     fn block_leaves_items_on_the_stack() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::Bool(true)),
-            Token::If(1),
-            Token::Block(2, Block::Open { close_position: 4 }),
-            Token::Constant(3, Value::I32(10)),
-            Token::Block(4, Block::Close { open_position: 2 }),
+            Token::Constant(Value::Bool(true)),
+            Token::If,
+            Token::Block(Block::Open { close_position: 4 }),
+            Token::Constant(Value::I32(10)),
+            Token::Block(Block::Close { open_position: 2 }),
         ]);
         let result = program.type_check();
         assert!(matches!(
@@ -252,12 +251,12 @@ mod tests {
     #[test]
     fn block_consumes_items_on_stack() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::Bool(true)),
-            Token::If(1),
-            Token::Block(2, Block::Open { close_position: 5 }),
-            Token::Constant(3, Value::Char('a')),
-            Token::Routine(4, Routine::new_intrinsic(IntrinsicRoutine::Print)),
-            Token::Block(5, Block::Close { open_position: 2 }),
+            Token::Constant(Value::Bool(true)),
+            Token::If,
+            Token::Block(Block::Open { close_position: 5 }),
+            Token::Constant(Value::Char('a')),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
+            Token::Block(Block::Close { open_position: 2 }),
         ]);
         let result = program.type_check();
         assert!(result.is_ok());
@@ -266,10 +265,10 @@ mod tests {
     #[test]
     fn if_test() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::Bool(true)),
-            Token::If(1),
-            Token::Block(2, Block::Open { close_position: 3 }),
-            Token::Block(3, Block::Close { open_position: 2 }),
+            Token::Constant(Value::Bool(true)),
+            Token::If,
+            Token::Block(Block::Open { close_position: 3 }),
+            Token::Block(Block::Close { open_position: 2 }),
         ]);
         let result = program.type_check();
         assert!(result.is_ok());
@@ -278,10 +277,10 @@ mod tests {
     #[test]
     fn if_fails_after_non_bool() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::Char('a')),
-            Token::If(1),
-            Token::Block(2, Block::Open { close_position: 3 }),
-            Token::Block(3, Block::Close { open_position: 2 }),
+            Token::Constant(Value::Char('a')),
+            Token::If,
+            Token::Block(Block::Open { close_position: 3 }),
+            Token::Block(Block::Close { open_position: 2 }),
         ]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
@@ -290,9 +289,9 @@ mod tests {
     #[test]
     fn if_empty_stack() {
         let program = PileProgram::new(&[
-            Token::If(0),
-            Token::Block(1, Block::Open { close_position: 2 }),
-            Token::Block(2, Block::Close { open_position: 1 }),
+            Token::If,
+            Token::Block(Block::Open { close_position: 2 }),
+            Token::Block(Block::Close { open_position: 1 }),
         ]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::NotEnoughItems)));
@@ -301,9 +300,9 @@ mod tests {
     #[test]
     fn if_fails_when_not_before_block() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::Bool(true)),
-            Token::If(1),
-            Token::Constant(2, Value::I32(10)),
+            Token::Constant(Value::Bool(true)),
+            Token::If,
+            Token::Constant(Value::I32(10)),
         ]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IfNotBeforeBlock)));
@@ -312,14 +311,14 @@ mod tests {
     #[test]
     fn while_test() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::String("This gets printed in the loop".to_owned())),
-            Token::Constant(1, Value::Bool(true)),
-            Token::While(2),
-            Token::Block(3, Block::Open { close_position: 7 }),
-            Token::Routine(4, Routine::new_intrinsic(IntrinsicRoutine::Clone)),
-            Token::Routine(5, Routine::new_intrinsic(IntrinsicRoutine::Print)),
-            Token::Constant(6, Value::Bool(false)),
-            Token::Block(7, Block::Close { open_position: 3 }),
+            Token::Constant(Value::String("This gets printed in the loop".to_owned())),
+            Token::Constant(Value::Bool(true)),
+            Token::While,
+            Token::Block(Block::Open { close_position: 7 }),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Clone)),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
+            Token::Constant(Value::Bool(false)),
+            Token::Block(Block::Close { open_position: 3 }),
         ]);
         let result = program.type_check();
         assert!(result.is_ok());
@@ -328,10 +327,10 @@ mod tests {
     #[test]
     fn while_fails_after_non_bool() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::Char('a')),
-            Token::While(1),
-            Token::Block(2, Block::Open { close_position: 3 }),
-            Token::Block(3, Block::Close { open_position: 2 }),
+            Token::Constant(Value::Char('a')),
+            Token::While,
+            Token::Block(Block::Open { close_position: 3 }),
+            Token::Block(Block::Close { open_position: 2 }),
         ]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
@@ -340,9 +339,9 @@ mod tests {
     #[test]
     fn while_empty_stack() {
         let program = PileProgram::new(&[
-            Token::While(0),
-            Token::Block(1, Block::Open { close_position: 2 }),
-            Token::Block(2, Block::Close { open_position: 1 }),
+            Token::While,
+            Token::Block(Block::Open { close_position: 2 }),
+            Token::Block(Block::Close { open_position: 1 }),
         ]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::NotEnoughItems)));
@@ -351,9 +350,9 @@ mod tests {
     #[test]
     fn while_fails_when_not_before_block() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::Bool(true)),
-            Token::While(1),
-            Token::Constant(1, Value::Bool(true)),
+            Token::Constant(Value::Bool(true)),
+            Token::While,
+            Token::Constant(Value::Bool(true)),
         ]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IfNotBeforeBlock)));
@@ -362,12 +361,12 @@ mod tests {
     #[test]
     fn generic_succeeds() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::String("Some String".to_owned())),
-            Token::Constant(1, Value::Char('a')),
-            Token::Routine(2, Routine::new_intrinsic(IntrinsicRoutine::Clone)),
-            Token::Routine(2, Routine::new_intrinsic(IntrinsicRoutine::Eq)),
-            Token::Routine(3, Routine::new_intrinsic(IntrinsicRoutine::Print)),
-            Token::Routine(4, Routine::new_intrinsic(IntrinsicRoutine::Print)),
+            Token::Constant(Value::String("Some String".to_owned())),
+            Token::Constant(Value::Char('a')),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Clone)),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Eq)),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
         ]);
         let result = program.type_check();
         assert!(result.is_ok());
@@ -376,7 +375,6 @@ mod tests {
     #[test]
     fn generic_fail_empty_stack() {
         let program = PileProgram::new(&[Token::Routine(
-            0,
             Routine::new_intrinsic(IntrinsicRoutine::Eq),
         )]);
         let result = program.type_check();
@@ -386,9 +384,9 @@ mod tests {
     #[test]
     fn generic_incorrect_types() {
         let program = PileProgram::new(&[
-            Token::Constant(0, Value::Char('a')),
-            Token::Constant(1, Value::String("Some String".to_owned())),
-            Token::Routine(2, Routine::new_intrinsic(IntrinsicRoutine::Eq)),
+            Token::Constant(Value::Char('a')),
+            Token::Constant(Value::String("Some String".to_owned())),
+            Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Eq)),
         ]);
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IncorrectType)));

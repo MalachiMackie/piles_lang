@@ -335,83 +335,82 @@ mod tests {
                 "constant i32 pushing",
                 "10 5",
                 &vec![
-                    Token::Constant(0, Value::I32(10)),
-                    Token::Constant(1, Value::I32(5)),
+                    Token::Constant(Value::I32(10)),
+                    Token::Constant(Value::I32(5)),
                 ],
             ),
             test_input(
                 "routine",
                 "!add",
                 &vec![Token::Routine(
-                    0,
                     Routine::new_intrinsic(IntrinsicRoutine::AddI32),
                 )],
             ),
             test_input(
                 "negative number",
                 "-124",
-                &vec![Token::Constant(0, Value::I32(-124))],
+                &vec![Token::Constant(Value::I32(-124))],
             ),
             test_input(
                 "constants and routine",
                 "10 5 !minus 15",
                 &vec![
-                    Token::Constant(0, Value::I32(10)),
-                    Token::Constant(1, Value::I32(5)),
-                    Token::Routine(2, Routine::new_intrinsic(IntrinsicRoutine::MinusI32)),
-                    Token::Constant(3, Value::I32(15)),
+                    Token::Constant(Value::I32(10)),
+                    Token::Constant(Value::I32(5)),
+                    Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::MinusI32)),
+                    Token::Constant(Value::I32(15)),
                 ],
             ),
             test_input(
                 "char",
                 "'a' '$'",
                 &vec![
-                    Token::Constant(0, Value::Char('a')),
-                    Token::Constant(1, Value::Char('$')),
+                    Token::Constant(Value::Char('a')),
+                    Token::Constant(Value::Char('$')),
                 ],
             ),
             test_input(
                 "bool",
                 "true false",
                 &vec![
-                    Token::Constant(0, Value::Bool(true)),
-                    Token::Constant(1, Value::Bool(false)),
+                    Token::Constant(Value::Bool(true)),
+                    Token::Constant(Value::Bool(false)),
                 ],
             ),
             test_input(
                 "empty string",
                 r#""""#,
-                &vec![Token::Constant(0, Value::String(String::new()))],
+                &vec![Token::Constant(Value::String(String::new()))],
             ),
             test_input(
                 "string with space",
                 r#""some string""#,
-                &vec![Token::Constant(0, Value::String("some string".to_owned()))],
+                &vec![Token::Constant(Value::String("some string".to_owned()))],
             ),
             test_input(
                 "string then routine",
                 r#""Hello World!" !print"#,
                 &vec![
-                    Token::Constant(0, Value::String("Hello World!".to_owned())),
-                    Token::Routine(1, Routine::new_intrinsic(IntrinsicRoutine::Print)),
+                    Token::Constant(Value::String("Hello World!".to_owned())),
+                    Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
                 ],
             ),
             test_input(
                 "block",
                 "{ }",
                 &vec![
-                    Token::Block(0, Block::Open { close_position: 1 }),
-                    Token::Block(1, Block::Close { open_position: 0 }),
+                    Token::Block(Block::Open { close_position: 1 }),
+                    Token::Block(Block::Close { open_position: 0 }),
                 ],
             ),
             test_input(
                 "nested block",
                 "{ { } }",
                 &vec![
-                    Token::Block(0, Block::Open { close_position: 3 }),
-                    Token::Block(1, Block::Open { close_position: 2 }),
-                    Token::Block(2, Block::Close { open_position: 1 }),
-                    Token::Block(3, Block::Close { open_position: 0 }),
+                    Token::Block(Block::Open { close_position: 3 }),
+                    Token::Block(Block::Open { close_position: 2 }),
+                    Token::Block(Block::Close { open_position: 1 }),
+                    Token::Block(Block::Close { open_position: 0 }),
                 ],
             ),
             test_input(
@@ -420,12 +419,12 @@ mod tests {
                             'a' !print
                         }",
                 &vec![
-                    Token::Constant(0, Value::Bool(true)),
-                    Token::If(1),
-                    Token::Block(2, Block::Open { close_position: 5 }),
-                    Token::Constant(3, Value::Char('a')),
-                    Token::Routine(4, Routine::new_intrinsic(IntrinsicRoutine::Print)),
-                    Token::Block(5, Block::Close { open_position: 2 }),
+                    Token::Constant(Value::Bool(true)),
+                    Token::If,
+                    Token::Block(Block::Open { close_position: 5 }),
+                    Token::Constant(Value::Char('a')),
+                    Token::Routine(Routine::new_intrinsic(IntrinsicRoutine::Print)),
+                    Token::Block(Block::Close { open_position: 2 }),
                 ],
             ),
         ];
