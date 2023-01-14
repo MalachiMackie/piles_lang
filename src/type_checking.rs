@@ -12,12 +12,41 @@ pub(crate) enum TypeCheckError {
     IfNotBeforeBlock,
     MissingGenericOutput,
     MissingRoutine,
+    RoutineExtraOutput,
+    RoutineMissingOutput,
+    RoutineIncorrectOutputType,
 }
 
 impl PileProgram {
     pub(crate) fn type_check(&self) -> Result<(), TypeCheckError> {
+        self.type_check_with_stack(&[])?;
+        for (routine_name, routine) in self.routines.iter() {
+            if let Routine::Pile { signiture, routine: tokens } = routine {
+                let mini_program = PileProgram::new(tokens, self.routines.clone());
+                let output_stack = mini_program.type_check_with_stack(signiture.inputs())?;
+
+                let mut expected_outputs = signiture.outputs().iter();
+                let mut actual_outputs = output_stack.iter();
+                while let Some(expected_output_type) = expected_outputs.next() {
+                    let Some(actual_output_type) = actual_outputs.next() else {
+                        return Err(TypeCheckError::RoutineMissingOutput);
+                    };
+                    if dbg!(actual_output_type) != dbg!(expected_output_type) {
+                        return Err(TypeCheckError::RoutineIncorrectOutputType);
+                    }
+                }
+                if actual_outputs.count() > 0 {
+                    println!("3");
+                    return Err(TypeCheckError::RoutineExtraOutput);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn type_check_with_stack(&self, existing_stack: &[Type]) -> Result<Box<[Type]>, TypeCheckError> {
         let tokens = &self.tokens;
-        let mut type_stack = Vec::new();
+        let mut type_stack = existing_stack.to_vec();
         let mut block_stack: Vec<(usize, Vec<Type>)> = Vec::new();
         let mut after_condition_checker = false;
         for (index, token) in tokens.iter().enumerate() {
@@ -83,7 +112,7 @@ impl PileProgram {
         if !block_stack.is_empty() {
             return Err(TypeCheckError::MissingCloseBlock);
         }
-        Ok(())
+        Ok(type_stack.into_boxed_slice())
     }
 }
 
@@ -167,7 +196,10 @@ mod tests {
             Token::RoutineCall("print".to_owned()),
         ], [("Something".to_owned(), Routine::Pile {
                 signiture: RoutineSigniture::new("Something", &[Type::I32], &[Type::String]),
-                routine: Vec::new().into_boxed_slice(),
+                routine: vec![
+                    Token::RoutineCall("print".to_owned()),
+                    Token::Constant(Value::String("Hello World".to_owned())),
+                ].into_boxed_slice(),
             })].into_iter().collect());
         let result = program.type_check();
         assert!(result.is_ok());
@@ -401,5 +433,85 @@ mod tests {
         ], HashMap::new());
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::IncorrectType)));
+    }
+
+    #[test]
+    fn routine_definition_successful() {
+        let program = PileProgram::new(&[
+            Token::Constant(Value::String("Hello World".to_owned())),
+            Token::RoutineCall("my_routine".to_owned()),
+        ], [(
+            "my_routine".to_owned(),
+            Routine::Pile {
+                signiture: RoutineSigniture::new("my_routine", &vec![Type::String], &vec![Type::I32]),
+                routine: vec![
+                    Token::RoutineCall("print".to_owned()),
+                    Token::Constant(Value::I32(10)),
+                ].into_boxed_slice()
+            }
+        )].into_iter().collect());
+
+        let result = program.type_check();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn routine_definition_missing_output() {
+        let program = PileProgram::new(&[
+            Token::Constant(Value::String("Hello World".to_owned())),
+            Token::RoutineCall("my_routine".to_owned()),
+        ], [(
+            "my_routine".to_owned(),
+            Routine::Pile {
+                signiture: RoutineSigniture::new("my_routine", &vec![Type::String], &vec![Type::I32]),
+                routine: vec![
+                    Token::RoutineCall("print".to_owned()),
+                ].into_boxed_slice()
+            }
+        )].into_iter().collect());
+
+        let result = program.type_check();
+        assert!(matches!(result, Err(TypeCheckError::RoutineMissingOutput)));
+    }
+
+    #[test]
+    fn routine_definition_incorrect_output() {
+        let program = PileProgram::new(&[
+            Token::Constant(Value::String("Hello World".to_owned())),
+            Token::RoutineCall("my_routine".to_owned()),
+        ], [(
+            "my_routine".to_owned(),
+            Routine::Pile {
+                signiture: RoutineSigniture::new("my_routine", &vec![Type::String], &vec![Type::I32]),
+                routine: vec![
+                    Token::RoutineCall("print".to_owned()),
+                    Token::Constant(Value::String("Hello World".to_owned())),
+                ].into_boxed_slice()
+            }
+        )].into_iter().collect());
+
+        let result = program.type_check();
+        assert!(matches!(result, Err(TypeCheckError::RoutineIncorrectOutputType)));
+    }
+
+    #[test]
+    fn routine_definition_extra_output() {
+        let program = PileProgram::new(&[
+            Token::Constant(Value::String("Hello World".to_owned())),
+            Token::RoutineCall("my_routine".to_owned()),
+        ], [(
+            "my_routine".to_owned(),
+            Routine::Pile {
+                signiture: RoutineSigniture::new("my_routine", &vec![Type::String], &vec![Type::I32]),
+                routine: vec![
+                    Token::RoutineCall("print".to_owned()),
+                    Token::Constant(Value::I32(10)),
+                    Token::Constant(Value::I32(10)),
+                ].into_boxed_slice()
+            }
+        )].into_iter().collect());
+
+        let result = program.type_check();
+        assert!(matches!(result, Err(TypeCheckError::RoutineExtraOutput)));
     }
 }

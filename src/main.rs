@@ -2,7 +2,7 @@ mod parsing;
 mod routines;
 mod type_checking;
 
-use routines::{run_routine, Routine, IntrinsicRoutine};
+use routines::{run_routine, Routine, IntrinsicRoutine, RoutineSigniture};
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fmt::{Display, Formatter};
@@ -72,7 +72,7 @@ impl PileProgram {
                 Token::RoutineCall(routine_name) => {
                     let routine = self.routines.get(routine_name).expect("type checking failed if routine is missing");
                     run_routine(&routine, &mut stack);
-                }
+                },
                 Token::Block(Block::Open { close_position }) => {}
                 Token::Block(Block::Close { open_position }) => {
                     if let Token::While = &tokens[open_position - 1] {
@@ -81,8 +81,8 @@ impl PileProgram {
                 }
                 Token::If | Token::While => {
                     let Token::Block(Block::Open { close_position }) = &tokens[index + 1] else {
-                    panic!("Expected open block after if or while");
-                };
+                        panic!("Expected open block after if or while");
+                    };
 
                     if !stack.pop_bool().expect("Type Checking Failed") {
                         index = *close_position;
