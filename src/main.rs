@@ -40,10 +40,63 @@ fn main() {
     println!("{:?}", output_stack);
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct PileProgram {
     tokens: Box<[Token]>,
     routines: HashMap<String, Routine>,
+}
+
+impl Display for PileProgram {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        for (routine_name, routine) in self.routines.iter() {
+            let Routine::Pile { signiture, routine } = routine else {
+                continue;
+            };
+            formatter.write_str(format!("!!{} | ", routine_name).as_str())?;
+            if signiture.inputs().len() == 0 {
+                formatter.write_str("None ")?;
+            } else {
+                for input in signiture.inputs().iter() {
+                    match input {
+                        Type::String => formatter.write_str("String ")?,
+                        Type::I32 => formatter.write_str("i32 ")?,
+                        Type::Bool => formatter.write_str("bool ")?,
+                        Type::Char => formatter.write_str("char ")?,
+                        Type::Generic { name } => formatter.write_str(format!("'{}", name).as_str())?,
+                    }
+                }
+                
+            }
+
+            formatter.write_str("-> ")?;
+
+            if signiture.outputs().len() == 0 {
+                formatter.write_str("None ")?;
+            } else {
+                for input in signiture.outputs().iter() {
+                    match input {
+                        Type::String => formatter.write_str("String ")?,
+                        Type::I32 => formatter.write_str("i32 ")?,
+                        Type::Bool => formatter.write_str("bool ")?,
+                        Type::Char => formatter.write_str("char ")?,
+                        Type::Generic { name } => formatter.write_str(format!("'{}", name).as_str())?,
+                    }
+                }
+            }
+
+            formatter.write_str("{\n")?;
+            for token in routine.iter() {
+                formatter.write_str(format!("\t{}\n", token).as_str())?;
+            }
+            formatter.write_str("}\n\n")?;
+        }
+
+        for token in self.tokens.iter() {
+            formatter.write_str(format!("{}\n", token).as_str())?;
+        }
+
+        Ok(())
+    }
 }
 
 impl PileProgram {
@@ -102,6 +155,23 @@ enum Token {
     Block(Block),
     If,
     While,
+}
+
+impl Display for Token {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            Token::Constant(Value::String(str_value)) => formatter.write_str(format!(r#""{}""#, str_value).as_str()),
+            Token::Constant(Value::Char(char_value)) => formatter.write_str(format!("'{}'", char_value).as_str()),
+            Token::Constant(Value::Bool(true)) => formatter.write_str("True"),
+            Token::Constant(Value::Bool(false)) => formatter.write_str("False"),
+            Token::Constant(Value::I32(i32_value)) => formatter.write_str(format!("{}", i32_value).as_str()),
+            Token::RoutineCall(routine_name) => formatter.write_str(format!("!{}", routine_name).as_str()),
+            Token::Block(Block::Open { close_position: _ }) => formatter.write_str("{"),
+            Token::Block(Block::Close { open_position: _ }) => formatter.write_str("}"),
+            Token::If => formatter.write_str("if"),
+            Token::While => formatter.write_str("while")
+        }
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]
