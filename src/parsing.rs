@@ -3,6 +3,7 @@ use crate::{
     Block, PileProgram, Token, Type, Value,
 };
 use std::str::Chars;
+use std::collections::HashMap;
 
 struct Parser<I: Iterator<Item = char>> {
     chars: I,
@@ -10,13 +11,17 @@ struct Parser<I: Iterator<Item = char>> {
     block_stack: Vec<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum TokenType {
     ConstantI32,
     ConstantChar,
     ConstantString,
     ConstantBool,
     RoutineCall,
+    RoutineDefinitionName,
+    RoutineDefinitionSeparator,
+    Type,
+    RoutineSignitureSeparator,
     OpenBlock,
     CloseBlock,
     If,
@@ -36,6 +41,42 @@ pub(crate) enum ParseError {
     ParseIntError,
     InvalidRoutine,
     MissingOpenBlock,
+    AlreadyDefiningRoutine,
+    UnexpectedRoutineDefinitionSeparator,
+    UnexpectedTypeName,
+    UnexpectedRoutineSignitureSeparator,
+    InvalidRoutineDefinitionName,
+    InvalidCharsInRoutineDefinitionName,
+    UnknownType,
+    RoutineMissingBang,
+    RoutineInvalidCharacters,
+    RoutineMissingName,
+    RoutineDefinitionMissingDefinitionName,
+    RoutineDefinitionMissingSeparator,
+    RoutineExtraNoneType,
+    RoutineMissingTypes,
+    RoutineSignitureUnexpectedToken,
+    RoutineMissingTokens,
+    InvalidCloseBlockOpenPosition,
+}
+
+#[derive(Debug, Clone)]
+enum IntermediateType {
+    Type(Type),
+    None
+}
+
+#[derive(Debug, Clone)]
+enum IntermediateToken {
+    Constant(Value),
+    Block(Block),
+    If,
+    While,
+    RoutineCall(String),
+    RoutineDefinitionName(String),
+    RoutineDefinitionSeparator,
+    Type(IntermediateType),
+    RoutineSignitureSeparator
 }
 
 impl<'a> Parser<Chars<'a>> {
@@ -49,43 +90,195 @@ impl<'a> Parser<Chars<'a>> {
     }
 
     fn parse(&mut self) -> Result<PileProgram, ParseError> {
-        let mut tokens = Vec::new();
+        let mut intermediate_tokens = Vec::new();
         let mut routines = IntrinsicRoutine::get_routine_dictionary();
-        while let Some(result) = self.next(tokens.len()) {
-            let token_position = tokens.len();
-            let token = result?;
-            if let Token::Block(Block::Close { open_position }) = token {
-                if let Some(Token::Block(Block::Open { close_position })) =
-                    tokens.get_mut(open_position)
-                {
-                    *close_position = token_position;
-                }
-            }
-            tokens.push(token);
+        while let Some(result) = self.next(intermediate_tokens.len()) {
+            intermediate_tokens.push(result?);
         }
-        Ok(PileProgram {
-            tokens: tokens.into_boxed_slice(),
-            routines
-        })
+        
+        let mut program = Self::convert_intermediate_tokens(&intermediate_tokens)?;
+        
+        Ok(program)
     }
 
-    fn next(&mut self, token_number: usize) -> Option<Result<Token, ParseError>> {
+    fn clean_block_positions(tokens: &mut [Token]) -> Result<(), ParseError> {
+        let mut open_positions = Vec::new();
+        let mut index = 0;
+        let count = tokens.iter().count();
+        while index < count {
+            let token = &mut tokens[index];
+            match token {
+                Token::Block(Block::Open { close_position }) => {
+                    open_positions.push(index);
+                },
+                Token::Block(Block::Close { open_position }) => {
+                    *open_position = open_positions.pop().ok_or(ParseError::MissingOpenBlock)?;
+                    let Token::Block(Block::Open { close_position }) = &mut tokens[*open_position] else {
+                        return Err(ParseError::InvalidCloseBlockOpenPosition);
+                    };
+                    *close_position = index;
+                },
+                _ => ()
+            }
+            index += 1;
+        }
+        Ok(())
+    }
+
+    fn convert_intermediate_tokens(intermediate_tokens: &[IntermediateToken]) -> Result<PileProgram, ParseError> {
+        let mut routines = IntrinsicRoutine::get_routine_dictionary();
+        let mut tokens = Vec::new();
+        let mut current_routine_definition_tokens: Option<Vec<_>> = None;
+        let mut current_routine_body_tokens: Option<Vec<_>> = None;
+        let mut current_routine_signiture = None;
+        let mut routine_nest_level = 0;
+        fn push_token(token: Token, current_routine_body_tokens: &mut Option<Vec<Token>>, tokens: &mut Vec<Token>) {
+            if let Some(routine_tokens) = current_routine_body_tokens {
+                routine_tokens.push(token);
+            } else {
+                tokens.push(token);
+            }
+        }
+        for token in intermediate_tokens {
+            match token.clone() {
+                IntermediateToken::Constant(value) => {
+                    push_token(Token::Constant(value.clone()), &mut current_routine_body_tokens, &mut tokens);
+                },
+                IntermediateToken::If => {
+                    push_token(Token::If, &mut current_routine_body_tokens, &mut tokens);
+                },
+                IntermediateToken::While => {
+                    push_token(Token::While, &mut current_routine_body_tokens, &mut tokens);
+                },
+                IntermediateToken::Block(Block::Open { close_position }) => {
+                    if let (Some(definition_tokens), None) = (&current_routine_definition_tokens, &current_routine_signiture) {
+                        let mut definition_tokens = definition_tokens.iter();
+                        let Some(IntermediateToken::RoutineDefinitionName(routine_name)) = definition_tokens.next() else {
+                            return Err(ParseError::RoutineDefinitionMissingDefinitionName);
+                        };
+                        if !matches!(definition_tokens.next(), Some(IntermediateToken::RoutineDefinitionSeparator)) {
+                            return Err(ParseError::RoutineDefinitionMissingSeparator);
+                        }
+                        let mut input_types = Vec::new();
+                        let mut input_none = false;
+                        loop {
+                            match definition_tokens.next() {
+                                Some(IntermediateToken::Type(IntermediateType::None)) if input_types.is_empty() => input_none = true,
+                                Some(IntermediateToken::Type(IntermediateType::None)) => return Err(ParseError::RoutineExtraNoneType),
+                                Some(IntermediateToken::Type(IntermediateType::Type(found_type))) => input_types.push(found_type.clone()),
+                                Some(IntermediateToken::RoutineSignitureSeparator) if input_none || !input_types.is_empty() => break,
+                                Some(IntermediateToken::RoutineSignitureSeparator) => return Err(ParseError::RoutineMissingTypes),
+                                Some(_) => return Err(ParseError::RoutineSignitureUnexpectedToken),
+                                None => return Err(ParseError::RoutineMissingTokens),
+                            }
+                        }
+                        let mut output_types = Vec::new();
+                        let mut output_none = false;
+                        loop {
+                            match definition_tokens.next() {
+                                Some(IntermediateToken::Type(IntermediateType::None)) if output_types.is_empty() => output_none = true,
+                                Some(IntermediateToken::Type(IntermediateType::None)) => return Err(ParseError::RoutineExtraNoneType),
+                                Some(IntermediateToken::Type(IntermediateType::Type(found_type))) => output_types.push(found_type.clone()),
+                                Some(_) => return Err(ParseError::RoutineSignitureUnexpectedToken),
+                                None if output_none || !output_types.is_empty() => break,
+                                None => return Err(ParseError::RoutineMissingTokens),
+                            }
+                        }
+                        current_routine_signiture = Some(RoutineSigniture::new(routine_name, &input_types, &output_types));
+                        current_routine_definition_tokens = None;
+                        current_routine_body_tokens = Some(Vec::new());
+                    } else {
+                        if let Some(body_tokens) = &mut current_routine_body_tokens {
+                            routine_nest_level += 1;
+                            body_tokens.push(Token::Block(Block::Open { close_position }));
+                        } else {
+                            tokens.push(Token::Block(Block::Open { close_position: close_position }))
+                        }
+                    }
+                },
+                IntermediateToken::Block(Block::Close { open_position }) => {
+                    if routine_nest_level == 0 {
+                        if let (Some(routine_signiture), Some(body_tokens)) = (current_routine_signiture.clone(), current_routine_body_tokens.clone()) {
+                            routines.insert(routine_signiture.name().to_owned(), Routine::Pile{ signiture: routine_signiture, routine: body_tokens.clone().into_boxed_slice() });
+                            current_routine_signiture = None;
+                            current_routine_body_tokens = None;
+                            continue;
+                        }
+                    }
+                    if let Some(body_tokens) = &mut current_routine_body_tokens {
+                        routine_nest_level -= 1;
+                        body_tokens.push(Token::Block(Block::Close { open_position }));
+                    } else {
+                        tokens.push(Token::Block(Block::Close { open_position }));
+                    }
+                }
+                IntermediateToken::RoutineCall(routine_name) => {
+                    push_token(Token::RoutineCall(routine_name.to_owned()), &mut current_routine_body_tokens, &mut tokens);
+                },
+                IntermediateToken::RoutineDefinitionName(routine_name) => {
+                    if current_routine_definition_tokens.is_some() {
+                        return Err(ParseError::AlreadyDefiningRoutine);
+                    }
+                    current_routine_definition_tokens = Some(vec![token.clone()]);
+                },
+                IntermediateToken::RoutineDefinitionSeparator => {
+                    let Some(current_routine_definition_tokens) = &mut current_routine_definition_tokens else {
+                        return Err(ParseError::UnexpectedRoutineDefinitionSeparator);
+                    };
+                    current_routine_definition_tokens.push(token.clone());
+                },
+                IntermediateToken::Type(_) => {
+                    let Some(current_routine_definition_tokens) = &mut current_routine_definition_tokens else {
+                        return Err(ParseError::UnexpectedTypeName);
+                    };
+                    current_routine_definition_tokens.push(token.clone());
+                },
+                IntermediateToken::RoutineSignitureSeparator => {
+                    let Some(current_routine_definition_tokens) = &mut current_routine_definition_tokens else {
+                        return Err(ParseError::UnexpectedRoutineSignitureSeparator);
+                    };
+                    current_routine_definition_tokens.push(token.clone());
+                },
+            }
+        }
+
+        for routine in &mut routines {
+            if let (_, Routine::Pile { signiture: _, routine: tokens }) = routine {
+                Self::clean_block_positions(&mut *tokens)?;
+            }
+        }
+
+        let mut tokens = tokens.into_boxed_slice();
+
+        Self::clean_block_positions(&mut *tokens)?;
+
+        Ok(PileProgram { routines, tokens })
+    }
+
+    fn next(&mut self, token_number: usize) -> Option<Result<IntermediateToken, ParseError>> {
         let mut current_part = Vec::new();
-        // todo: add all values
+        // todo: add all values at compile time
         let mut possible_token_types = vec![
             TokenType::ConstantChar,
             TokenType::ConstantString,
             TokenType::ConstantI32,
             TokenType::ConstantBool,
             TokenType::RoutineCall,
+            TokenType::RoutineDefinitionName,
+            TokenType::RoutineDefinitionSeparator,
+            TokenType::Type,
+            TokenType::RoutineSignitureSeparator,
             TokenType::OpenBlock,
             TokenType::CloseBlock,
             TokenType::If,
             TokenType::While,
-        ];
+        ].into_boxed_slice();
         let mut token_type = None;
         let mut delimeter: &dyn Fn(char) -> bool = &char::is_whitespace;
         while let Some(next_char) = self.chars.next() {
+            if current_part.is_empty() && next_char.is_whitespace() {
+                continue;
+            }
             current_part.push(next_char);
             if delimeter(next_char) {
                 if current_part.iter().collect::<String>().trim().is_empty() {
@@ -96,19 +289,22 @@ impl<'a> Parser<Chars<'a>> {
 
             if token_type.is_none() {
                 let current_str: String = current_part.iter().collect();
-                evaluate_possible_tokens(&current_str.trim(), &mut possible_token_types);
+                possible_token_types = evaluate_possible_tokens(current_str.trim());
             }
             if possible_token_types.len() == 1 && token_type.is_none() {
-                token_type = Some(possible_token_types[0].clone());
-                if let Some(TokenType::ConstantString) = token_type {
+                token_type = Some(possible_token_types[0]);
+                if let TokenType::ConstantString = &possible_token_types[0] {
                     delimeter = &|c: char| c == '"';
                 }
             }
         }
-        let string_value: String = current_part.into_iter().collect();
-        let Some(token_type) = token_type else {
+
+        if current_part.iter().filter(|p| !p.is_whitespace()).count() == 0 {
             return None;
-        };
+        }
+
+        let string_value: String = current_part.into_iter().collect();
+        let token_type = token_type.expect(format!("Should be able to refine down to one token type: {:?}. {:?}", possible_token_types, string_value.trim()).as_str());
         match token_type {
             TokenType::ConstantChar => Some(parse_char(string_value.trim())),
             TokenType::ConstantString => Some(parse_string(string_value.trim())),
@@ -116,140 +312,110 @@ impl<'a> Parser<Chars<'a>> {
                 string_value
                     .trim()
                     .parse()
-                    .map(|i32_value| Token::Constant(Value::I32(i32_value)))
+                    .map(|i32_value| IntermediateToken::Constant(Value::I32(i32_value)))
                     .map_err(|e| ParseError::ParseIntError),
             ),
             TokenType::ConstantBool => Some(parse_bool(string_value.trim())),
             TokenType::OpenBlock => {
                 self.block_stack.push(token_number);
-                Some(Ok(Token::Block(Block::Open { close_position: 0 })))
+                Some(Ok(IntermediateToken::Block(Block::Open { close_position: 0 })))
             }
             TokenType::CloseBlock => {
                 if let Some(open_position) = self.block_stack.pop() {
-                    Some(Ok(Token::Block(Block::Close { open_position })))
+                    Some(Ok(IntermediateToken::Block(Block::Close { open_position })))
                 } else {
                     Some(Err(ParseError::MissingOpenBlock))
                 }
             }
-            TokenType::If => Some(Ok(Token::If)),
-            TokenType::While => Some(Ok(Token::While)),
+            TokenType::If => Some(Ok(IntermediateToken::If)),
+            TokenType::While => Some(Ok(IntermediateToken::While)),
             TokenType::RoutineCall => Some(parse_routine_call(string_value.trim())),
+            TokenType::RoutineDefinitionName => Some(parse_routine_definition_name(string_value.trim())),
+            TokenType::RoutineDefinitionSeparator => Some(Ok(IntermediateToken::RoutineDefinitionSeparator)),
+            TokenType::RoutineSignitureSeparator => Some(Ok(IntermediateToken::RoutineSignitureSeparator)),
+            TokenType::Type => Some(parse_type_name(string_value.trim())),
         }
     }
 }
 
-fn evaluate_possible_tokens(value: &str, current_possibilities: &mut Vec<TokenType>) {
-    if !value.starts_with("'") {
-        if let Some(found_index) = current_possibilities
-            .iter()
-            .position(|p| p == &TokenType::ConstantChar)
-        {
-            current_possibilities.remove(found_index);
+fn evaluate_possible_tokens(value: &str) -> Box<[TokenType]> {
+    let mut possibilities = Vec::new();
+    fn add_type_if(possibilities: &mut Vec<TokenType>, token_type: TokenType, condition: bool) {
+        if condition {
+            possibilities.push(token_type);
         }
     }
-    if !value.starts_with("\"") {
-        if let Some(found_index) = current_possibilities
-            .iter()
-            .position(|p| p == &TokenType::ConstantString)
-        {
-            current_possibilities.remove(found_index);
-        }
-    }
-    if !value.starts_with("!") {
-        if let Some(found_index) = current_possibilities
-            .iter()
-            .position(|p| p == &TokenType::RoutineCall)
-        {
-            current_possibilities.remove(found_index);
-        }
-    }
+    add_type_if(&mut possibilities, TokenType::ConstantChar, value.starts_with("'"));
+    add_type_if(&mut possibilities, TokenType::ConstantString, value.starts_with("\""));
+    add_type_if(&mut possibilities, TokenType::RoutineCall, value.starts_with("!") && value.chars().skip(1).next().filter(|c| !c.is_alphabetic()).is_none());
+    add_type_if(&mut possibilities, TokenType::RoutineDefinitionName, value.starts_with("!") && value.len() <= 1 || value.starts_with("!!"));
+    add_type_if(&mut possibilities, TokenType::RoutineSignitureSeparator, "->".starts_with(value));
+    add_type_if(&mut possibilities, TokenType::RoutineDefinitionSeparator, value == "|");
     if value
         .find(|c: char| c == '.' || !(c.is_numeric() || c == '-'))
-        .is_some()
+        .is_none()
     {
-        if let Some(found_index) = current_possibilities
-            .iter()
-            .position(|p| p == &TokenType::ConstantI32)
-        {
-            current_possibilities.remove(found_index);
-        }
+        possibilities.push(TokenType::ConstantI32);
     }
-    if value != "{" {
-        if let Some(found_index) = current_possibilities
-            .iter()
-            .position(|p| p == &TokenType::OpenBlock)
-        {
-            current_possibilities.remove(found_index);
-        }
-    }
-    if value != "}" {
-        if let Some(found_index) = current_possibilities
-            .iter()
-            .position(|p| p == &TokenType::CloseBlock)
-        {
-            current_possibilities.remove(found_index);
-        }
-    }
-    if !"if".starts_with(value) {
-        if let Some(found_index) = current_possibilities
-            .iter()
-            .position(|p| p == &TokenType::If)
-        {
-            current_possibilities.remove(found_index);
-        }
-    }
-    if !"while".starts_with(value) {
-        if let Some(found_index) = current_possibilities
-            .iter()
-            .position(|p| p == &TokenType::While)
-        {
-            current_possibilities.remove(found_index);
-        }
-    }
-    const true_str: &str = "true";
-    const false_str: &str = "false";
-    if let Some(found_index) = current_possibilities
-        .iter()
-        .position(|p| p == &TokenType::ConstantBool)
-    {
-        let mut true_chars = true_str.chars();
-        let mut false_chars = false_str.chars();
-        for (index, char_value) in value.chars().enumerate() {
-            let true_char = true_chars.next();
-            let false_char = false_chars.next();
-            let is_invalid = match (true_char, false_char) {
-                (None, None) => true,
-                (Some(true_char), None) => true_char != char_value,
-                (None, Some(false_char)) => false_char != char_value,
-                (Some(true_char), Some(false_char)) => {
-                    true_char != char_value && false_char != char_value
-                }
-            };
-            if is_invalid {
-                current_possibilities.remove(found_index);
-                break;
-            }
-        }
-    }
+    add_type_if(&mut possibilities, TokenType::OpenBlock, value == "{");
+    add_type_if(&mut possibilities, TokenType::CloseBlock, value == "}");
+    add_type_if(&mut possibilities, TokenType::If, "if".starts_with(value));
+    add_type_if(&mut possibilities, TokenType::While, "while".starts_with(value));
+    add_type_if(&mut possibilities, TokenType::ConstantBool, "true".starts_with(value) || "false".starts_with(value));
+    
 
-    if value.find(|c: char| !c.is_numeric() && c != '.').is_some() {
-        // todo: floats
-    }
+    let type_names = TYPE_NAMES.iter().map(|(name, _)| name);
+    add_type_if(&mut possibilities, TokenType::Type, type_names.filter(|name| name.starts_with(value)).count() > 0);
+    possibilities.into_boxed_slice()
 }
 
-fn parse_routine_call(value: &str) -> Result<Token, ParseError> {
-    if !value.starts_with('!') {
-        Err(ParseError::InvalidRoutine)
-    } else if value.len() <= 2 {
-        Err(ParseError::InvalidRoutine)
-    } else if value.chars().skip(1).filter(|c| !c.is_alphanumeric() && *c == '_').count() > 0 {
-        Err(ParseError::InvalidRoutine)
+static TYPE_NAMES: [(&str, IntermediateType); 5] = [
+    ("i32", IntermediateType::Type(Type::I32)),
+    ("str", IntermediateType::Type(Type::String)),
+    ("bool", IntermediateType::Type(Type::Bool)),
+    ("char", IntermediateType::Type(Type::Char)),
+    ("None", IntermediateType::None),
+];
+
+fn parse_type_name(value: &str) -> Result<IntermediateToken, ParseError> {
+    let type_names: HashMap<_, _> = TYPE_NAMES.iter().cloned().collect();
+
+    if let Some(found_type) = type_names.get(value) {
+        Ok(IntermediateToken::Type(found_type.clone()))
     } else {
-        Ok(Token::RoutineCall(value[1..].to_string()))
+        Err(ParseError::UnknownType)
     }
 }
 
-fn parse_char(value: &str) -> Result<Token, ParseError> {
+fn parse_routine_call(value: &str) -> Result<IntermediateToken, ParseError> {
+    fn is_char_allowed(char_value: char) -> bool {
+        char_value.is_alphabetic() || char_value == '_'
+    }
+    if !value.starts_with('!') {
+        Err(ParseError::RoutineMissingBang)
+    } else if value.chars().skip(1).count() == 0 {
+        Err(ParseError::RoutineMissingName)
+    } else if value.chars().skip(1).filter(|c| !is_char_allowed(*c)).count() > 0 {
+        Err(ParseError::RoutineInvalidCharacters)
+    } else {
+        Ok(IntermediateToken::RoutineCall(value[1..].to_string()))
+    }
+}
+
+fn parse_routine_definition_name(value: &str) -> Result<IntermediateToken, ParseError> {
+    fn is_char_allowed(char_value: char) -> bool {
+        char_value.is_alphabetic() || char_value == '_'
+    }
+    if !value.starts_with("!!") {
+        Err(ParseError::InvalidRoutineDefinitionName)
+    } else if value.chars().skip(2).filter(|c| !is_char_allowed(*c)).count() > 0 {
+        Err(ParseError::InvalidCharsInRoutineDefinitionName)
+    } else {
+        Ok(IntermediateToken::RoutineDefinitionName(value[2..].to_string()))
+    }
+}
+
+fn parse_char(value: &str) -> Result<IntermediateToken, ParseError> {
     if !value.starts_with('\'') {
         return Err(ParseError::CharMissingOpeningTick);
     } else if !value.ends_with('\'') || value.len() == 1 {
@@ -259,13 +425,12 @@ fn parse_char(value: &str) -> Result<Token, ParseError> {
     // todo: allow escaping
     match (middle_chars.len(), middle_chars.first()) {
         (1, _) => Err(ParseError::CharMissingChar),
-        (2, Some(char_value)) => Ok(Token::Constant(Value::Char(*char_value))),
+        (2, Some(char_value)) => Ok(IntermediateToken::Constant(Value::Char(*char_value))),
         _ => Err(ParseError::CharExtraCharacters),
     }
 }
 
-fn parse_string(value: &str) -> Result<Token, ParseError> {
-    println!("{}", value);
+fn parse_string(value: &str) -> Result<IntermediateToken, ParseError> {
     if !value.starts_with('"') {
         return Err(ParseError::StringMissingOpeningQuote);
     } else if !value.ends_with('"') || value.len() == 1 {
@@ -280,15 +445,15 @@ fn parse_string(value: &str) -> Result<Token, ParseError> {
         return Err(ParseError::StringMissingClosingQuote);
     }
     let len = rest.len();
-    Ok(Token::Constant(Value::String(
+    Ok(IntermediateToken::Constant(Value::String(
         rest.into_iter().take(len - 1).collect::<String>(),
     )))
 }
 
-fn parse_bool(value: &str) -> Result<Token, ParseError> {
+fn parse_bool(value: &str) -> Result<IntermediateToken, ParseError> {
     match value {
-        "true" => Ok(Token::Constant(Value::Bool(true))),
-        "false" => Ok(Token::Constant(Value::Bool(false))),
+        "true" => Ok(IntermediateToken::Constant(Value::Bool(true))),
+        "false" => Ok(IntermediateToken::Constant(Value::Bool(false))),
         _ => Err(ParseError::BoolInvalid),
     }
 }
@@ -491,5 +656,149 @@ mod tests {
             println!("{}", err);
             panic!();
         }
+    }
+
+    #[test]
+    fn routine_definition() {
+        let input = r#"
+!!my_routine | i32 -> str {
+    !print
+    "Hello World"
+}
+
+10 !my_routine
+!print
+"#;
+        let program = PileProgram::parse(input);
+        let expected_program = PileProgram::new(&[
+            Token::Constant(Value::I32(10)),
+            Token::RoutineCall("my_routine".to_owned()),
+            Token::RoutineCall("print".to_owned()),
+        ], [("my_routine".to_owned(), Routine::Pile {
+            signiture: RoutineSigniture::new("my_routine", &vec![Type::I32], &vec![Type::String]),
+            routine: vec![
+                Token::RoutineCall("print".to_owned()),
+                Token::Constant(Value::String("Hello World".to_owned())),
+            ].into_boxed_slice(),
+        })].into_iter().collect());
+
+        assert_eq!(Ok(expected_program), program);
+    }
+
+    #[test]
+    fn recursive_routine() {
+        let input = r#"
+!!my_recursive_routine | i32 -> None {
+	!clone 0 !eq !not if {
+		!clone !print
+		1 !swap !minus !my_recursive_routine
+	}
+}
+
+
+10 !my_recursive_routine
+"#;
+
+        let program = PileProgram::parse(input);
+        let expected_program = PileProgram::new(&[
+            Token::Constant(Value::I32(10)),
+            Token::RoutineCall("my_recursive_routine".to_owned()),
+        ],
+        [
+            (
+                "my_recursive_routine".to_owned(),
+                Routine::Pile {
+                    signiture: RoutineSigniture::new("my_recursive_routine", &[Type::I32], &[]),
+                    routine: vec![
+                        Token::RoutineCall("clone".to_owned()),
+                        Token::Constant(Value::I32(0)),
+                        Token::RoutineCall("eq".to_owned()),
+                        Token::RoutineCall("not".to_owned()),
+                        Token::If,
+                        Token::Block(Block::Open { close_position: 12 }),
+                        Token::RoutineCall("clone".to_owned()),
+                        Token::RoutineCall("print".to_owned()),
+                        Token::Constant(Value::I32(1)),
+                        Token::RoutineCall("swap".to_owned()),
+                        Token::RoutineCall("minus".to_owned()),
+                        Token::RoutineCall("my_recursive_routine".to_owned()),
+                        Token::Block(Block::Close { open_position: 5 }),
+                    ].into_boxed_slice()
+                }
+            )
+        ].into_iter().collect());
+
+        assert_eq!(program, Ok(expected_program));
+
+    }
+
+    #[test]
+    fn routine_and_if_blocks() {
+        let input = r#"
+!!my_routine | bool -> None {
+    !clone if {
+        "condition was true" !print
+    }
+    !not if {
+        "condition was false" !print
+    }
+
+    "Hello World. This will always print" !print
+
+}
+
+true !my_routine
+false !my_routine
+
+true if {
+    "Hello World. This is after the routines" !print
+}
+
+10 !print
+
+"#;
+
+        let program = PileProgram::parse(input);
+        let expected_program = PileProgram::new(&[
+            Token::Constant(Value::Bool(true)),
+            Token::RoutineCall("my_routine".to_owned()),
+            Token::Constant(Value::Bool(false)),
+            Token::RoutineCall("my_routine".to_owned()),
+            Token::Constant(Value::Bool(true)),
+            Token::If,
+            Token::Block(Block::Open { close_position: 9 }),
+            Token::Constant(Value::String("Hello World. This is after the routines".to_owned())),
+            Token::RoutineCall("print".to_owned()),
+            Token::Block(Block::Close { open_position: 6 }),
+            Token::Constant(Value::I32(10)),
+            Token::RoutineCall("print".to_owned()),
+        ],
+        [
+            (
+                "my_routine".to_owned(),
+                Routine::Pile {
+                    signiture: RoutineSigniture::new("my_routine", &[Type::Bool], &[]),
+                    routine: vec![
+                        Token::RoutineCall("clone".to_owned()),
+                        Token::If,
+                        Token::Block(Block::Open { close_position: 5 }),
+                        Token::Constant(Value::String("condition was true".to_owned())),
+                        Token::RoutineCall("print".to_owned()),
+                        Token::Block(Block::Close { open_position: 2 }),
+                        Token::RoutineCall("not".to_owned()),
+                        Token::If,
+                        Token::Block(Block::Open { close_position: 11 }),
+                        Token::Constant(Value::String("condition was false".to_owned())),
+                        Token::RoutineCall("print".to_owned()),
+                        Token::Block(Block::Close { open_position: 8 }),
+                        Token::Constant(Value::String("Hello World. This will always print".to_owned())),
+                        Token::RoutineCall("print".to_owned()),
+                    ].into_boxed_slice()
+                }
+            )
+        ].into_iter().collect());
+
+        assert_eq!(program, Ok(expected_program));
+
     }
 }

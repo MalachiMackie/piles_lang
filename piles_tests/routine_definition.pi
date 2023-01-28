@@ -1,0 +1,21 @@
+!!my_routine | bool -> None {
+    !clone if {
+        "condition was true" !print
+    }
+    !not if {
+        "condition was false" !print
+    }
+
+    "Hello World. This will always print" !print
+
+}
+
+true !my_routine
+false !my_routine
+
+true if {
+    "Hello World. This is after the routines" !print
+}
+
+10 !print
+

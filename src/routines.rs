@@ -1,62 +1,5 @@
-use crate::{Stack, Token, Type, Value};
+use crate::{Stack, Token, Type, Value, Block};
 use std::collections::HashMap;
-
-pub(crate) fn run_routine(routine: &Routine, stack: &mut Stack) {
-    debug_assert!(routine.signiture().inputs.len() <= stack.len());
-    match routine {
-        Routine::Intrinsic {
-            signiture: _,
-            routine,
-        } => run_intrinsic_routine(routine, stack),
-        Routine::Pile {
-            signiture: _,
-            routine,
-        } => run_pile_routine(routine, stack),
-    }
-}
-
-fn run_pile_routine(routine: &[Token], stack: &mut Stack) {
-    todo!()
-}
-
-fn run_intrinsic_routine(routine: &IntrinsicRoutine, stack: &mut Stack) {
-    match routine {
-        IntrinsicRoutine::AddI32 => {
-            let a = stack.pop_i32().expect("Type checking failed");
-            let b = stack.pop_i32().expect("Type checking failed");
-            stack.push(Value::I32(a + b));
-        }
-        IntrinsicRoutine::MinusI32 => {
-            let a = stack.pop_i32().expect("Type checking failed");
-            let b = stack.pop_i32().expect("Type checking failed");
-            stack.push(Value::I32(a - b));
-        }
-        IntrinsicRoutine::Print => {
-            let a = stack.pop().expect("Type checking failed");
-            println!("{}", a);
-        }
-        IntrinsicRoutine::Eq => {
-            let a = stack.pop().expect("Type checking failed");
-            let b = stack.pop().expect("Type checking failed");
-            stack.push(Value::Bool(a == b));
-        }
-        IntrinsicRoutine::Not => {
-            let a = stack.pop_bool().expect("Type checking_failed");
-            stack.push(Value::Bool(!a));
-        }
-        IntrinsicRoutine::Clone => {
-            let a = stack.pop().expect("Type checking failed");
-            stack.push(a.clone());
-            stack.push(a);
-        }
-        IntrinsicRoutine::Swap => {
-            let a = stack.pop().expect("Type checking failed");
-            let b = stack.pop().expect("Type checking failed");
-            stack.push(a);
-            stack.push(b);
-        }
-    }
-}
 
 #[derive(PartialEq, Debug, Clone)]
 pub(crate) enum Routine {
@@ -195,6 +138,13 @@ impl RoutineSigniture {
                 .into_boxed_slice(),
                 name: "swap".to_owned(),
             },
+            IntrinsicRoutine::Drop => Self {
+                inputs: vec![
+                    Type::Generic { name: "A".to_owned() }
+                ].into_boxed_slice(),
+                outputs: Vec::new().into_boxed_slice(),
+                name: "drop".to_owned(),
+            }
         }
     }
 
@@ -216,22 +166,67 @@ pub(crate) enum IntrinsicRoutine {
     Not,
     Clone,
     Swap,
+    Drop,
 }
 
 impl IntrinsicRoutine {
     pub(crate) fn get_routine_dictionary() -> HashMap<String, Routine> {
         let intrinsics = [
             Routine::new_intrinsic(IntrinsicRoutine::AddI32),
+            Routine::new_intrinsic(IntrinsicRoutine::MinusI32),
             Routine::new_intrinsic(IntrinsicRoutine::Print),
             Routine::new_intrinsic(IntrinsicRoutine::Eq),
             Routine::new_intrinsic(IntrinsicRoutine::Not),
             Routine::new_intrinsic(IntrinsicRoutine::Clone),
             Routine::new_intrinsic(IntrinsicRoutine::Swap),
+            Routine::new_intrinsic(IntrinsicRoutine::Drop),
         ];
 
         intrinsics.into_iter()
             .map(|routine| (routine.signiture().name.clone(), routine))
             .collect()
+    }
+
+    pub(crate) fn run(&self, stack: &mut Stack) {
+        match self {
+        IntrinsicRoutine::AddI32 => {
+            let a = stack.pop_i32().expect("Type checking failed");
+            let b = stack.pop_i32().expect("Type checking failed");
+            stack.push(Value::I32(a + b));
+        }
+        IntrinsicRoutine::MinusI32 => {
+            let a = stack.pop_i32().expect("Type checking failed");
+            let b = stack.pop_i32().expect("Type checking failed");
+            stack.push(Value::I32(a - b));
+        }
+        IntrinsicRoutine::Print => {
+            let a = stack.pop().expect("Type checking failed");
+            println!("{}", a);
+        }
+        IntrinsicRoutine::Eq => {
+            let a = stack.pop().expect("Type checking failed");
+            let b = stack.pop().expect("Type checking failed");
+            stack.push(Value::Bool(a == b));
+        }
+        IntrinsicRoutine::Not => {
+            let a = stack.pop_bool().expect("Type checking_failed");
+            stack.push(Value::Bool(!a));
+        }
+        IntrinsicRoutine::Clone => {
+            let a = stack.pop().expect("Type checking failed");
+            stack.push(a.clone());
+            stack.push(a);
+        }
+        IntrinsicRoutine::Swap => {
+            let a = stack.pop().expect("Type checking failed");
+            let b = stack.pop().expect("Type checking failed");
+            stack.push(a);
+            stack.push(b);
+        }
+        IntrinsicRoutine::Drop => {
+            stack.pop().expect("Type checking failed");
+        }
+    }
     }
 }
 
@@ -243,15 +238,15 @@ mod tests {
     #[should_panic]
     fn run_routine_should_panic_when_stack_doesnt_have_enough_items() {
         let mut stack = Stack::from_values(&vec![Value::I32(10)]);
-        let routine = Routine::new_intrinsic(IntrinsicRoutine::AddI32);
-        run_routine(&routine, &mut stack);
+        let routine = IntrinsicRoutine::AddI32;
+        routine.run(&mut stack);
     }
 
     #[test]
     fn test_add() {
         let mut stack = Stack::from_values(&vec![Value::I32(10), Value::I32(15)]);
-        let routine = Routine::new_intrinsic(IntrinsicRoutine::AddI32);
-        run_routine(&routine, &mut stack);
+        let routine = IntrinsicRoutine::AddI32;
+        routine.run(&mut stack);
         let expected_stack = Stack::from_values(&vec![Value::I32(25)]);
         assert_eq!(stack, expected_stack);
     }
@@ -259,8 +254,8 @@ mod tests {
     #[test]
     fn test_minus() {
         let mut stack = Stack::from_values(&vec![Value::I32(10), Value::I32(25)]);
-        let routine = Routine::new_intrinsic(IntrinsicRoutine::MinusI32);
-        run_routine(&routine, &mut stack);
+        let routine = IntrinsicRoutine::MinusI32;
+        routine.run(&mut stack);
         let expected_stack = Stack::from_values(&vec![Value::I32(15)]);
         assert_eq!(stack, expected_stack);
     }
@@ -269,8 +264,8 @@ mod tests {
     fn test_print_char() {
         // todo: test std::out
         let mut stack = Stack::from_values(&vec![Value::Char('a')]);
-        let routine = Routine::new_intrinsic(IntrinsicRoutine::Print);
-        run_routine(&routine, &mut stack);
+        let routine = IntrinsicRoutine::Print;
+        routine.run(&mut stack);
         let expected_stack = Stack::new();
         assert_eq!(stack, expected_stack);
     }
@@ -278,8 +273,8 @@ mod tests {
     #[test]
     fn test_print_string() {
         let mut stack = Stack::from_values(&vec![Value::String("Hello World!".to_owned())]);
-        let routine = Routine::new_intrinsic(IntrinsicRoutine::Print);
-        run_routine(&routine, &mut stack);
+        let routine = IntrinsicRoutine::Print;
+        routine.run(&mut stack);
         let expected_stack = Stack::new();
         assert_eq!(stack, expected_stack);
     }

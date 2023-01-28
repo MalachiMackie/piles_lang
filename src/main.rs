@@ -2,7 +2,7 @@ mod parsing;
 mod routines;
 mod type_checking;
 
-use routines::{run_routine, Routine, IntrinsicRoutine, RoutineSigniture};
+use routines::{Routine, IntrinsicRoutine, RoutineSigniture};
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fmt::{Display, Formatter};
@@ -16,12 +16,10 @@ fn main() {
     if args.len() != 2 {
         todo!("Usage other than single file input");
     }
-    println!("{}", file);
 
     let mut contents = String::new();
     let mut file = std::fs::File::open(&file).unwrap();
     file.read_to_string(&mut contents).unwrap();
-    println!("{}", contents);
 
     let program = match PileProgram::parse(&contents) {
         Ok(program) => program,
@@ -36,8 +34,6 @@ fn main() {
     }
 
     let output_stack = program.run();
-
-    println!("{:?}", output_stack);
 }
 
 #[derive(Debug, PartialEq)]
@@ -75,7 +71,7 @@ impl Display for PileProgram {
             } else {
                 for input in signiture.outputs().iter() {
                     match input {
-                        Type::String => formatter.write_str("String ")?,
+                        Type::String => formatter.write_str("str ")?,
                         Type::I32 => formatter.write_str("i32 ")?,
                         Type::Bool => formatter.write_str("bool ")?,
                         Type::Char => formatter.write_str("char ")?,
@@ -109,12 +105,7 @@ impl PileProgram {
         }
     }
 
-    fn run(&self) -> Stack {
-        let tokens = &self.tokens;
-        let mut stack = Stack::new();
-        if tokens.is_empty() {
-            return stack;
-        }
+    fn run_tokens(&self, tokens: &[Token], mut stack: &mut Stack) {
         let mut index = 0;
         while index < tokens.len() {
             let token = &tokens[index];
@@ -124,7 +115,10 @@ impl PileProgram {
                 }
                 Token::RoutineCall(routine_name) => {
                     let routine = self.routines.get(routine_name).expect("type checking failed if routine is missing");
-                    run_routine(&routine, &mut stack);
+                    match routine {
+                        Routine::Intrinsic { signiture, routine } => routine.run(&mut stack),
+                        Routine::Pile { signiture, routine } => self.run_tokens(routine, &mut stack)
+                    }
                 },
                 Token::Block(Block::Open { close_position }) => {}
                 Token::Block(Block::Close { open_position }) => {
@@ -144,6 +138,14 @@ impl PileProgram {
             }
             index += 1;
         }
+    }
+
+    fn run(&self) -> Stack {
+        let tokens = &self.tokens;
+        let mut stack = Stack::new();
+
+        self.run_tokens(tokens, &mut stack);
+        
         stack
     }
 }

@@ -36,7 +36,6 @@ impl PileProgram {
                     }
                 }
                 if actual_outputs.count() > 0 {
-                    println!("3");
                     return Err(TypeCheckError::RoutineExtraOutput);
                 }
             }
@@ -513,5 +512,41 @@ mod tests {
 
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::RoutineExtraOutput)));
+    }
+
+    #[test]
+    fn recursive_routine() {
+        let program = PileProgram::new(&[
+            Token::Constant(Value::I32(10)),
+            Token::RoutineCall("my_recursive_routine".to_owned()),
+        ],
+        [
+            (
+                "my_recursive_routine".to_owned(),
+                Routine::Pile {
+                    signiture: RoutineSigniture::new("my_recursive_routine", &[Type::I32], &[]),
+                    routine: vec![
+                        Token::RoutineCall("clone".to_owned()),
+                        Token::Constant(Value::I32(0)),
+                        Token::RoutineCall("eq".to_owned()),
+                        Token::RoutineCall("not".to_owned()),
+                        Token::If,
+                        Token::Block(Block::Open { close_position: 12 }),
+                        Token::RoutineCall("clone".to_owned()),
+                        Token::RoutineCall("print".to_owned()),
+                        Token::Constant(Value::I32(1)),
+                        Token::RoutineCall("swap".to_owned()),
+                        Token::RoutineCall("minus".to_owned()),
+                        Token::RoutineCall("my_recursive_routine".to_owned()),
+                        Token::Constant(Value::I32(0)),
+                        Token::Block(Block::Close { open_position: 5 }),
+                        Token::RoutineCall("drop".to_owned()),
+                    ].into_boxed_slice()
+                }
+            )
+        ].into_iter().collect());
+
+        let result = program.type_check();
+        assert!(result.is_ok());
     }
 }
