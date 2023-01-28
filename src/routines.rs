@@ -83,6 +83,11 @@ impl RoutineSigniture {
                 outputs: Vec::new().into_boxed_slice(),
                 name: "print".to_owned(),
             },
+            IntrinsicRoutine::PrintLine => Self {
+                inputs: Vec::new().into_boxed_slice(),
+                outputs: Vec::new().into_boxed_slice(),
+                name: "println".to_owned(),
+            },
             IntrinsicRoutine::Eq => Self {
                 inputs: vec![
                     Type::Generic {
@@ -161,6 +166,11 @@ impl RoutineSigniture {
                     Type::Generic { name: "B".to_owned() },
                 ].into_boxed_slice(),
                 name: "clone_over".to_owned(),
+            },
+            IntrinsicRoutine::Mod => Self {
+                inputs: vec![Type::I32, Type::I32].into_boxed_slice(),
+                outputs: vec![Type::I32].into_boxed_slice(),
+                name: "mod".to_owned(),
             }
         }
     }
@@ -179,6 +189,7 @@ pub(crate) enum IntrinsicRoutine {
     AddI32,
     MinusI32,
     Print,
+    PrintLine,
     Eq,
     GreaterThan,
     Not,
@@ -186,6 +197,7 @@ pub(crate) enum IntrinsicRoutine {
     Swap,
     Drop,
     CloneOver,
+    Mod,
 }
 
 impl IntrinsicRoutine {
@@ -194,6 +206,7 @@ impl IntrinsicRoutine {
             Routine::new_intrinsic(IntrinsicRoutine::AddI32),
             Routine::new_intrinsic(IntrinsicRoutine::MinusI32),
             Routine::new_intrinsic(IntrinsicRoutine::Print),
+            Routine::new_intrinsic(IntrinsicRoutine::PrintLine),
             Routine::new_intrinsic(IntrinsicRoutine::Eq),
             Routine::new_intrinsic(IntrinsicRoutine::GreaterThan),
             Routine::new_intrinsic(IntrinsicRoutine::Not),
@@ -201,6 +214,7 @@ impl IntrinsicRoutine {
             Routine::new_intrinsic(IntrinsicRoutine::Swap),
             Routine::new_intrinsic(IntrinsicRoutine::Drop),
             Routine::new_intrinsic(IntrinsicRoutine::CloneOver),
+            Routine::new_intrinsic(IntrinsicRoutine::Mod),
         ];
 
         intrinsics.into_iter()
@@ -210,56 +224,64 @@ impl IntrinsicRoutine {
 
     pub(crate) fn run(&self, stack: &mut Stack) {
         match self {
-        IntrinsicRoutine::AddI32 => {
-            let a = stack.pop_i32().expect("Type checking failed");
-            let b = stack.pop_i32().expect("Type checking failed");
-            stack.push(Value::I32(a + b));
+            IntrinsicRoutine::AddI32 => {
+                let a = stack.pop_i32().expect("Type checking failed");
+                let b = stack.pop_i32().expect("Type checking failed");
+                stack.push(Value::I32(a + b));
+            }
+            IntrinsicRoutine::MinusI32 => {
+                let a = stack.pop_i32().expect("Type checking failed");
+                let b = stack.pop_i32().expect("Type checking failed");
+                stack.push(Value::I32(a - b));
+            }
+            IntrinsicRoutine::Print => {
+                let a = stack.pop().expect("Type checking failed");
+                print!("{}", a);
+            }
+            IntrinsicRoutine::PrintLine => {
+                println!();
+            }
+            IntrinsicRoutine::Eq => {
+                let a = stack.pop().expect("Type checking failed");
+                let b = stack.pop().expect("Type checking failed");
+                stack.push(Value::Bool(a == b));
+            }
+            IntrinsicRoutine::Not => {
+                let a = stack.pop_bool().expect("Type checking_failed");
+                stack.push(Value::Bool(!a));
+            }
+            IntrinsicRoutine::Clone => {
+                let a = stack.pop().expect("Type checking failed");
+                stack.push(a.clone());
+                stack.push(a);
+            }
+            IntrinsicRoutine::Swap => {
+                let a = stack.pop().expect("Type checking failed");
+                let b = stack.pop().expect("Type checking failed");
+                stack.push(a);
+                stack.push(b);
+            }
+            IntrinsicRoutine::Drop => {
+                stack.pop().expect("Type checking failed");
+            },
+            IntrinsicRoutine::CloneOver => {
+                let a = stack.pop().expect("Type checking failed");
+                let b = stack.pop().expect("Type checking failed");
+                stack.push(b.clone());
+                stack.push(a);
+                stack.push(b);
+            }
+            IntrinsicRoutine::GreaterThan => {
+                let a = stack.pop_i32().expect("Type checking failed");
+                let b = stack.pop_i32().expect("Type checking failed");
+                stack.push(Value::Bool(a > b));
+            }
+            IntrinsicRoutine::Mod => {
+                let a = stack.pop_i32().expect("Type checking failed");
+                let b = stack.pop_i32().expect("Type checking failed");
+                stack.push(Value::I32(a % b));
+            }
         }
-        IntrinsicRoutine::MinusI32 => {
-            let a = stack.pop_i32().expect("Type checking failed");
-            let b = stack.pop_i32().expect("Type checking failed");
-            stack.push(Value::I32(a - b));
-        }
-        IntrinsicRoutine::Print => {
-            let a = stack.pop().expect("Type checking failed");
-            println!("{}", a);
-        }
-        IntrinsicRoutine::Eq => {
-            let a = stack.pop().expect("Type checking failed");
-            let b = stack.pop().expect("Type checking failed");
-            stack.push(Value::Bool(a == b));
-        }
-        IntrinsicRoutine::Not => {
-            let a = stack.pop_bool().expect("Type checking_failed");
-            stack.push(Value::Bool(!a));
-        }
-        IntrinsicRoutine::Clone => {
-            let a = stack.pop().expect("Type checking failed");
-            stack.push(a.clone());
-            stack.push(a);
-        }
-        IntrinsicRoutine::Swap => {
-            let a = stack.pop().expect("Type checking failed");
-            let b = stack.pop().expect("Type checking failed");
-            stack.push(a);
-            stack.push(b);
-        }
-        IntrinsicRoutine::Drop => {
-            stack.pop().expect("Type checking failed");
-        },
-        IntrinsicRoutine::CloneOver => {
-            let a = stack.pop().expect("Type checking failed");
-            let b = stack.pop().expect("Type checking failed");
-            stack.push(b.clone());
-            stack.push(a);
-            stack.push(b);
-        }
-        IntrinsicRoutine::GreaterThan => {
-            let a = stack.pop_i32().expect("Type checking failed");
-            let b = stack.pop_i32().expect("Type checking failed");
-            stack.push(Value::Bool(a > b));
-        }
-    }
     }
 }
 
@@ -344,5 +366,11 @@ mod tests {
     fn test_greater_than() {
         test_routine(&[Value::I32(15), Value::I32(10)], IntrinsicRoutine::GreaterThan, &[Value::Bool(false)]);
         test_routine(&[Value::I32(10), Value::I32(15)], IntrinsicRoutine::GreaterThan, &[Value::Bool(true)]);
+    }
+
+    #[test]
+    fn test_mod() {
+        test_routine(&[Value::I32(3), Value::I32(15)], IntrinsicRoutine::Mod, &[Value::I32(0)]);
+        test_routine(&[Value::I32(4), Value::I32(15)], IntrinsicRoutine::Mod, &[Value::I32(3)]);
     }
 }

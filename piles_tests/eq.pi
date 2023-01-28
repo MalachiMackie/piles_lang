@@ -1,7 +1,7 @@
 10 10 !eq if {
-	"10 == 10" !print
+	"10 == 10" !print !println
 }
 
 10 5 !eq if {
-	"10 == 5" !print
+	"10 == 5" !print !println
 }

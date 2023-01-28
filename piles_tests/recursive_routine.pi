@@ -1,6 +1,6 @@
 !!my_recursive_routine | i32 -> None {
 	!clone 0 !eq !not if {
-		!clone !print
+		!clone !print !println
 		1 !swap !minus !my_recursive_routine
 		0
 	}

@@ -1,6 +1,6 @@
 0 1
-!clone_over !print
-!clone !print
+!clone_over !print !println
+!clone !print !println
 
 !!while_check | i32 -> i32 bool {
 	!clone 100000000 !gt
@@ -8,6 +8,6 @@
 
 !while_check while {
 	!swap !clone_over !add
-	!clone !print
+	!clone !print !println
 	!while_check
 }

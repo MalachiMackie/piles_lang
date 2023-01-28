@@ -1,4 +1,4 @@
-"Hello World!" !print
-'a' !print
-true !print
-10 !print
+"Hello World!" !print !println
+'a' !print !println
+true !print !println
+10 !print !println

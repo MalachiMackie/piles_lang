@@ -1,1 +1,5 @@
 10 'a' "Hello World!" true
+!print !println
+!print !println
+!print !println
+!print !println
