@@ -31,7 +31,7 @@ impl PileProgram {
                     let Some(actual_output_type) = actual_outputs.next() else {
                         return Err(TypeCheckError::RoutineMissingOutput);
                     };
-                    if dbg!(actual_output_type) != dbg!(expected_output_type) {
+                    if actual_output_type != expected_output_type {
                         return Err(TypeCheckError::RoutineIncorrectOutputType);
                     }
                 }

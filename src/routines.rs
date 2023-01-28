@@ -96,6 +96,11 @@ impl RoutineSigniture {
                 outputs: vec![Type::Bool].into_boxed_slice(),
                 name: "eq".to_owned(),
             },
+            IntrinsicRoutine::GreaterThan => Self {
+                inputs: vec![Type::I32, Type::I32].into_boxed_slice(),
+                outputs: vec![Type::Bool].into_boxed_slice(),
+                name: "gt".to_owned(),
+            },
             IntrinsicRoutine::Not => Self {
                 inputs: vec![Type::Bool].into_boxed_slice(),
                 outputs: vec![Type::Bool].into_boxed_slice(),
@@ -144,6 +149,18 @@ impl RoutineSigniture {
                 ].into_boxed_slice(),
                 outputs: Vec::new().into_boxed_slice(),
                 name: "drop".to_owned(),
+            },
+            IntrinsicRoutine::CloneOver => Self {
+                inputs: vec![
+                    Type::Generic { name: "A".to_owned() },
+                    Type::Generic { name: "B".to_owned() },
+                ].into_boxed_slice(),
+                outputs: vec![
+                    Type::Generic { name: "B".to_owned() },
+                    Type::Generic { name: "A".to_owned() },
+                    Type::Generic { name: "B".to_owned() },
+                ].into_boxed_slice(),
+                name: "clone_over".to_owned(),
             }
         }
     }
@@ -163,10 +180,12 @@ pub(crate) enum IntrinsicRoutine {
     MinusI32,
     Print,
     Eq,
+    GreaterThan,
     Not,
     Clone,
     Swap,
     Drop,
+    CloneOver,
 }
 
 impl IntrinsicRoutine {
@@ -176,10 +195,12 @@ impl IntrinsicRoutine {
             Routine::new_intrinsic(IntrinsicRoutine::MinusI32),
             Routine::new_intrinsic(IntrinsicRoutine::Print),
             Routine::new_intrinsic(IntrinsicRoutine::Eq),
+            Routine::new_intrinsic(IntrinsicRoutine::GreaterThan),
             Routine::new_intrinsic(IntrinsicRoutine::Not),
             Routine::new_intrinsic(IntrinsicRoutine::Clone),
             Routine::new_intrinsic(IntrinsicRoutine::Swap),
             Routine::new_intrinsic(IntrinsicRoutine::Drop),
+            Routine::new_intrinsic(IntrinsicRoutine::CloneOver),
         ];
 
         intrinsics.into_iter()
@@ -225,6 +246,18 @@ impl IntrinsicRoutine {
         }
         IntrinsicRoutine::Drop => {
             stack.pop().expect("Type checking failed");
+        },
+        IntrinsicRoutine::CloneOver => {
+            let a = stack.pop().expect("Type checking failed");
+            let b = stack.pop().expect("Type checking failed");
+            stack.push(b.clone());
+            stack.push(a);
+            stack.push(b);
+        }
+        IntrinsicRoutine::GreaterThan => {
+            let a = stack.pop_i32().expect("Type checking failed");
+            let b = stack.pop_i32().expect("Type checking failed");
+            stack.push(Value::Bool(a > b));
         }
     }
     }
@@ -233,6 +266,13 @@ impl IntrinsicRoutine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_routine(input_stack: &[Value], routine: IntrinsicRoutine, expected_stack: &[Value]) {
+        let mut stack = Stack::from_values(input_stack);
+        routine.run(&mut stack);
+        let expected_stack = Stack::from_values(expected_stack);
+        assert_eq!(stack, expected_stack);
+    }
 
     #[test]
     #[should_panic]
@@ -244,20 +284,36 @@ mod tests {
 
     #[test]
     fn test_add() {
-        let mut stack = Stack::from_values(&vec![Value::I32(10), Value::I32(15)]);
-        let routine = IntrinsicRoutine::AddI32;
-        routine.run(&mut stack);
-        let expected_stack = Stack::from_values(&vec![Value::I32(25)]);
-        assert_eq!(stack, expected_stack);
+        test_routine(&[Value::I32(10), Value::I32(15)], IntrinsicRoutine::AddI32, &[Value::I32(25)]);
+    }
+
+    #[test]
+    fn test_not() {
+        test_routine(&[Value::Bool(true)], IntrinsicRoutine::Not, &[Value::Bool(false)]);
+        test_routine(&[Value::Bool(false)], IntrinsicRoutine::Not, &[Value::Bool(true)]);
+    }
+
+    #[test]
+    fn test_clone() {
+        test_routine(&[Value::Bool(true)], IntrinsicRoutine::Clone, &[Value::Bool(true), Value::Bool(true)]);
+        test_routine(&[Value::String("Hello World".to_owned())], IntrinsicRoutine::Clone, &[Value::String("Hello World".to_owned()), Value::String("Hello World".to_owned())]);
+    }
+
+    #[test]
+    fn test_swap() {
+        test_routine(&[Value::Bool(true), Value::I32(35)], IntrinsicRoutine::Swap, &[Value::I32(35), Value::Bool(true)]);
+    }
+
+    #[test]
+    fn test_drop() {
+        test_routine(&[Value::Bool(true)], IntrinsicRoutine::Drop, &[]);
+        test_routine(&[Value::I32(145)], IntrinsicRoutine::Drop, &[]);
+        test_routine(&[Value::I32(145), Value::String("Hi".to_owned())], IntrinsicRoutine::Drop, &[Value::I32(145)]);
     }
 
     #[test]
     fn test_minus() {
-        let mut stack = Stack::from_values(&vec![Value::I32(10), Value::I32(25)]);
-        let routine = IntrinsicRoutine::MinusI32;
-        routine.run(&mut stack);
-        let expected_stack = Stack::from_values(&vec![Value::I32(15)]);
-        assert_eq!(stack, expected_stack);
+        test_routine(&[Value::I32(10), Value::I32(5)], IntrinsicRoutine::MinusI32, &[Value::I32(-5)]);
     }
 
     #[test]
@@ -277,5 +333,16 @@ mod tests {
         routine.run(&mut stack);
         let expected_stack = Stack::new();
         assert_eq!(stack, expected_stack);
+    }
+
+    #[test]
+    fn test_clone_over() {
+        test_routine(&[Value::String("Hi".to_owned()), Value::I32(15)], IntrinsicRoutine::CloneOver, &[Value::String("Hi".to_owned()), Value::I32(15), Value::String("Hi".to_owned())]);
+    }
+
+    #[test]
+    fn test_greater_than() {
+        test_routine(&[Value::I32(15), Value::I32(10)], IntrinsicRoutine::GreaterThan, &[Value::Bool(false)]);
+        test_routine(&[Value::I32(10), Value::I32(15)], IntrinsicRoutine::GreaterThan, &[Value::Bool(true)]);
     }
 }
