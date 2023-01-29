@@ -171,6 +171,11 @@ impl RoutineSigniture {
                 inputs: vec![Type::I32, Type::I32].into_boxed_slice(),
                 outputs: vec![Type::I32].into_boxed_slice(),
                 name: "mod".to_owned(),
+            },
+            IntrinsicRoutine::StringConcat => Self {
+                inputs: vec![Type::String, Type::String].into_boxed_slice(),
+                outputs: vec![Type::String].into_boxed_slice(),
+                name: "str_concat".to_owned()
             }
         }
     }
@@ -198,6 +203,7 @@ pub(crate) enum IntrinsicRoutine {
     Drop,
     CloneOver,
     Mod,
+    StringConcat,
 }
 
 impl IntrinsicRoutine {
@@ -215,6 +221,7 @@ impl IntrinsicRoutine {
             Routine::new_intrinsic(IntrinsicRoutine::Drop),
             Routine::new_intrinsic(IntrinsicRoutine::CloneOver),
             Routine::new_intrinsic(IntrinsicRoutine::Mod),
+            Routine::new_intrinsic(IntrinsicRoutine::StringConcat),
         ];
 
         intrinsics.into_iter()
@@ -280,6 +287,11 @@ impl IntrinsicRoutine {
                 let a = stack.pop_i32().expect("Type checking failed");
                 let b = stack.pop_i32().expect("Type checking failed");
                 stack.push(Value::I32(a % b));
+            }
+            IntrinsicRoutine::StringConcat => {
+                let a = stack.pop_string().expect("Type checking failed");
+                let b = stack.pop_string().expect("Type checking failed");
+                stack.push(Value::String(format!("{}{}", b, a)));
             }
         }
     }
@@ -372,5 +384,10 @@ mod tests {
     fn test_mod() {
         test_routine(&[Value::I32(3), Value::I32(15)], IntrinsicRoutine::Mod, &[Value::I32(0)]);
         test_routine(&[Value::I32(4), Value::I32(15)], IntrinsicRoutine::Mod, &[Value::I32(3)]);
+    }
+
+    #[test]
+    fn test_str_concat() {
+        test_routine(&[Value::String("Hello ".to_string()), Value::String("World!".to_string())], IntrinsicRoutine::StringConcat, &[Value::String("Hello World!".to_string())]);
     }
 }

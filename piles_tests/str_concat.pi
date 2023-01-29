@@ -1,0 +1,10 @@
+"Hello"
+" "
+"World"
+"!"
+
+!str_concat
+!str_concat
+!str_concat
+
+!print
