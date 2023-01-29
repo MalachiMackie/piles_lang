@@ -26,6 +26,7 @@ enum TokenType {
     CloseBlock,
     If,
     While,
+    Comment,
 }
 
 #[derive(Debug, PartialEq)]
@@ -58,6 +59,7 @@ pub(crate) enum ParseError {
     RoutineSignitureUnexpectedToken,
     RoutineMissingTokens,
     InvalidCloseBlockOpenPosition,
+    UnknownToken,
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +78,8 @@ enum IntermediateToken {
     RoutineDefinitionName(String),
     RoutineDefinitionSeparator,
     Type(IntermediateType),
-    RoutineSignitureSeparator
+    RoutineSignitureSeparator,
+    Comment
 }
 
 impl<'a> Parser<Chars<'a>> {
@@ -150,6 +153,7 @@ impl<'a> Parser<Chars<'a>> {
                 IntermediateToken::While => {
                     push_token(Token::While, &mut current_routine_body_tokens, &mut tokens);
                 },
+                IntermediateToken::Comment => (),
                 IntermediateToken::Block(Block::Open { close_position }) => {
                     if let (Some(definition_tokens), None) = (&current_routine_definition_tokens, &current_routine_signiture) {
                         let mut definition_tokens = definition_tokens.iter();
@@ -258,21 +262,6 @@ impl<'a> Parser<Chars<'a>> {
     fn next(&mut self, token_number: usize) -> Option<Result<IntermediateToken, ParseError>> {
         let mut current_part = Vec::new();
         // todo: add all values at compile time
-        let mut possible_token_types = vec![
-            TokenType::ConstantChar,
-            TokenType::ConstantString,
-            TokenType::ConstantI32,
-            TokenType::ConstantBool,
-            TokenType::RoutineCall,
-            TokenType::RoutineDefinitionName,
-            TokenType::RoutineDefinitionSeparator,
-            TokenType::Type,
-            TokenType::RoutineSignitureSeparator,
-            TokenType::OpenBlock,
-            TokenType::CloseBlock,
-            TokenType::If,
-            TokenType::While,
-        ].into_boxed_slice();
         let mut token_type = None;
         let mut delimeter: &dyn Fn(char) -> bool = &char::is_whitespace;
         while let Some(next_char) = self.chars.next() {
@@ -288,13 +277,14 @@ impl<'a> Parser<Chars<'a>> {
             }
 
             if token_type.is_none() {
-                let current_str: String = current_part.iter().collect();
-                possible_token_types = evaluate_possible_tokens(current_str.trim());
-            }
-            if possible_token_types.len() == 1 && token_type.is_none() {
-                token_type = Some(possible_token_types[0]);
-                if let TokenType::ConstantString = &possible_token_types[0] {
-                    delimeter = &|c: char| c == '"';
+                let possible_token_types = evaluate_possible_tokens(current_part.iter().collect::<String>().trim());
+                if possible_token_types.len() == 1 {
+                    token_type = Some(possible_token_types[0]);
+                    match token_type {
+                        Some(TokenType::ConstantString) => delimeter = &|c: char| c == '"',
+                        Some(TokenType::Comment) => delimeter = &|c: char| c == '\n',
+                        _ => ()
+                    }
                 }
             }
         }
@@ -304,8 +294,11 @@ impl<'a> Parser<Chars<'a>> {
         }
 
         let string_value: String = current_part.into_iter().collect();
-        let token_type = token_type.expect(format!("Should be able to refine down to one token type: {:?}. {:?}", possible_token_types, string_value.trim()).as_str());
+        let Some(token_type) = token_type else {
+            return Some(Err(ParseError::UnknownToken));
+        };
         match token_type {
+            TokenType::Comment => Some(Ok(IntermediateToken::Comment)),
             TokenType::ConstantChar => Some(parse_char(string_value.trim())),
             TokenType::ConstantString => Some(parse_string(string_value.trim())),
             TokenType::ConstantI32 => Some(
@@ -345,6 +338,7 @@ fn evaluate_possible_tokens(value: &str) -> Box<[TokenType]> {
             possibilities.push(token_type);
         }
     }
+    add_type_if(&mut possibilities, TokenType::Comment, value.len() == 1 && value == "/" || value.len() > 1 && value.starts_with("//"));
     add_type_if(&mut possibilities, TokenType::ConstantChar, value.starts_with("'"));
     add_type_if(&mut possibilities, TokenType::ConstantString, value.starts_with("\""));
     add_type_if(&mut possibilities, TokenType::RoutineCall, value.starts_with("!") && value.chars().skip(1).next().filter(|c| !c.is_alphabetic()).is_none());
@@ -733,6 +727,46 @@ mod tests {
     }
 
     #[test]
+    fn comments() {
+        let input = r#"
+!!my_routine | i32 -> str {
+    !print !println
+    // this is fine
+    // "Hi"
+    "Hello World"
+}
+
+// this is a comment
+10 
+!my_routine
+// !print
+!print
+"#;
+
+        let program = PileProgram::parse(input);
+        let expected_program = PileProgram::new(&[
+            Token::Constant(Value::I32(10)),
+            Token::RoutineCall("my_routine".to_owned()),
+            Token::RoutineCall("print".to_owned()),
+        ],
+        [
+            (
+                "my_routine".to_owned(),
+                Routine::Pile {
+                    signiture: RoutineSigniture::new("my_routine", &[Type::I32], &[Type::String]),
+                    routine: vec![
+                        Token::RoutineCall("print".to_owned()),
+                        Token::RoutineCall("println".to_owned()),
+                        Token::Constant(Value::String("Hello World".to_owned())),
+                    ].into_boxed_slice()
+                }
+            )
+        ].into_iter().collect());
+
+        assert_eq!(program, Ok(expected_program)); 
+    }
+
+    #[test]
     fn routine_and_if_blocks() {
         let input = r#"
 !!my_routine | bool -> None {
@@ -799,6 +833,5 @@ true if {
         ].into_iter().collect());
 
         assert_eq!(program, Ok(expected_program));
-
     }
 }
