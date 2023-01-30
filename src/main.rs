@@ -1,24 +1,56 @@
 mod parsing;
 mod routines;
 mod type_checking;
+mod compile;
 
 use routines::{Routine, IntrinsicRoutine, RoutineSigniture};
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fmt::{Display, Formatter};
 use std::io::prelude::*;
+use clap::{Arg, ArgAction, Command, Parser, crate_name};
+
+const INTERPRET_COMMAND: &str = "interpret";
+const COMPILE_COMMAND: &str = "compile";
+const FILE_ARG: &str = "file";
+
+fn get_command() -> Command {
+    Command::new(crate_name!())
+        .about("todo")
+        .subcommand_required(true)
+        .subcommand(
+            Command::new(INTERPRET_COMMAND)
+                .about("todo")
+                .arg(Arg::new(FILE_ARG).required(true))
+        )
+        .subcommand(
+            Command::new(COMPILE_COMMAND)
+                .about("todo")
+                .arg(Arg::new(FILE_ARG).required(true))
+        )
+}
+
+#[derive(Debug)]
+enum Operation {
+    Interpret,
+    Compile
+}
+
 
 fn main() {
-    let args: Vec<_> = env::args().collect();
-    let Some(file) = args.get(1) else {
-        todo!("Usage other than single file input");
+    let mut command = get_command();
+    let matches = command.clone().get_matches_from(env::args());
+    let Some((operation, file_name)) = (match matches.subcommand() {
+        Some((INTERPRET_COMMAND, sub_m)) => Some((Operation::Interpret, sub_m.get_one::<String>(FILE_ARG).unwrap())),
+        Some((COMPILE_COMMAND, sub_m)) => Some((Operation::Compile, sub_m.get_one::<String>(FILE_ARG).unwrap())),
+        _ => None,
+    }) else {
+        command.print_help();
+        return;
     };
-    if args.len() != 2 {
-        todo!("Usage other than single file input");
-    }
 
     let mut contents = String::new();
-    let mut file = std::fs::File::open(&file).unwrap();
+    let mut file = std::fs::File::open(&file_name).unwrap();
     file.read_to_string(&mut contents).unwrap();
 
     let program = match PileProgram::parse(&contents) {
@@ -33,7 +65,10 @@ fn main() {
         return;
     }
 
-    let output_stack = program.run();
+    match operation {
+        Operation::Interpret => _ = program.run(),
+        Operation::Compile => program.compile(file_name).unwrap(),
+    }
 }
 
 #[derive(Debug, PartialEq)]
