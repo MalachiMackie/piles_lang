@@ -24,9 +24,12 @@ pub(crate) enum CompilerError{
     InvalidLoadType { expected: String, found: String },
     InvalidExtractType { expected: String, found: String },
     InvalidReturnValue { expected: String, found: String, fn_name: String },
+    InvalidTypeStackTypes { expected: Box<[LLVMType]>, found: Box<[Option<LLVMType>]> },
 }
 
-enum LLVMType {
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum LLVMType {
     ConstString,
     String,
     I32,
@@ -481,36 +484,40 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn call_intrinsic(&self, routine: &IntrinsicRoutine, type_stack: &mut Vec<LLVMType>) -> Result<(), CompilerError> {
+        let pop_i16 = self.module.get_function(POP_I16).ok_or_else(|| CompilerError::MissingRoutine(POP_I16.to_owned()))?;
+        let pop_i64 = self.module.get_function(POP_I64).ok_or_else(|| CompilerError::MissingRoutine(POP_I64.to_owned()))?;
+        let pop_i32 = self.module.get_function(POP_I32).ok_or_else(|| CompilerError::MissingRoutine(POP_I32.to_owned()))?;
+
+        let push_i32 = self.module.get_function(PUSH_I32).ok_or_else(|| CompilerError::MissingRoutine(PUSH_I32.to_owned()))?;
+
+        let print_str = self.module.get_function(PRINT_STR).ok_or_else(|| CompilerError::MissingRoutine(PRINT_STR.to_owned()))?;
+        let print_i32 = self.module.get_function(PRINT_I32).ok_or_else(|| CompilerError::MissingRoutine(PRINT_I32.to_owned()))?;
+        let print_bool = self.module.get_function(PRINT_BOOL).ok_or_else(|| CompilerError::MissingRoutine(PRINT_BOOL.to_owned()))?;
+        let print_char = self.module.get_function(PRINT_CHAR).ok_or_else(|| CompilerError::MissingRoutine(PRINT_CHAR.to_owned()))?;
         match routine {
             IntrinsicRoutine::Print => {
                 let top_type = type_stack.pop().expect("Type stack should not be empty");
 
                 match top_type {
                     LLVMType::ConstString => {
-                        
-                        let pop_i64_fn = self.module.get_function(POP_I64).ok_or_else(|| CompilerError::MissingRoutine(POP_I64.to_owned()))?;
-
-                        let str_ptr_int = self.builder.build_call(pop_i64_fn, &[], "str_ptr").try_as_basic_value().left();
+                        let str_ptr_int = self.builder.build_call(pop_i64, &[], "str_ptr").try_as_basic_value().left();
                         let Some(BasicValueEnum::IntValue(str_ptr_int)) = str_ptr_int else {
                             return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", str_ptr_int), fn_name: POP_I64.to_owned() });
                         };
 
                         let str_ptr = self.builder.build_int_to_ptr(str_ptr_int, self.types.str_type, "str_ptr");
 
-                        let print_str = self.module.get_function(PRINT_STR).ok_or_else(|| CompilerError::MissingRoutine(PRINT_STR.to_owned()))?;
                         self.builder.build_call(print_str, &[str_ptr.into()], "");
                     },
                     LLVMType::String => {
                         todo!();
                     },
                     LLVMType::I32 => {
-                        let pop_i32_fn = self.module.get_function(POP_I32).ok_or_else(|| CompilerError::MissingRoutine(POP_I32.to_owned()))?;
-                        let int_value = self.builder.build_call(pop_i32_fn, &[], "int_value").try_as_basic_value().left();
+                        let int_value = self.builder.build_call(pop_i32, &[], "int_value").try_as_basic_value().left();
                         let Some(BasicValueEnum::IntValue(int_value)) = int_value else {
                             return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", int_value), fn_name: POP_I32.to_owned() });
                         };
 
-                        let print_i32 = self.module.get_function(PRINT_I32).ok_or_else(|| CompilerError::MissingRoutine(PRINT_I32.to_owned()))?;
                         self.builder.build_call(print_i32, &[int_value.into()], "");
                     }
                     LLVMType::Bool => {
@@ -520,11 +527,9 @@ impl<'ctx> CodeGen<'ctx> {
                             return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", byte_value), fn_name: POP_BYTE.to_owned() });
                         };
 
-                        let print_byte = self.module.get_function(PRINT_BOOL).ok_or_else(|| CompilerError::MissingRoutine(PRINT_BOOL.to_owned()))?;
-                        self.builder.build_call(print_byte, &[byte_value.into()], "");
+                        self.builder.build_call(print_bool, &[byte_value.into()], "");
                     },
                     LLVMType::Char => {
-                        let pop_i16 = self.module.get_function(POP_I16).ok_or_else(|| CompilerError::MissingRoutine(POP_I16.to_owned()))?;
                         let last_16 = self.builder.build_call(pop_i16, &[], "last_16").try_as_basic_value().left();
                         let Some(BasicValueEnum::IntValue(last_16)) = last_16 else {
                             return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", last_16), fn_name: POP_I16.to_owned() });
@@ -542,9 +547,6 @@ impl<'ctx> CodeGen<'ctx> {
                             return Err(CompilerError::InvalidInsertValueResult { expected: "array".to_owned(), found: format!("{:?}", array_value).to_owned() });
                         };
 
-                        // let array_value = self.types.i16_type.const_array(&[first_16, last_16]);
-
-                        let print_char = self.module.get_function(PRINT_CHAR).ok_or_else(|| CompilerError::MissingRoutine(PRINT_CHAR.to_owned()))?;
                         self.builder.build_call(print_char, &[array_value.into()], "");
                     }
                 }
@@ -558,8 +560,40 @@ impl<'ctx> CodeGen<'ctx> {
                 let new_line = self.module.get_global("new_line").unwrap();
                 self.builder.build_call(puts, &[new_line.as_pointer_value().into()], "");
                 Ok(())
-            }
-            _ => Ok(())
+            },
+            IntrinsicRoutine::AddI32 => {
+                let top_type = type_stack.pop();
+                let second_type = type_stack.pop();
+                if !matches!((top_type, second_type), (Some(LLVMType::I32), Some(LLVMType::I32))) {
+                    return Err(CompilerError::InvalidTypeStackTypes { expected: Box::new([LLVMType::I32, LLVMType::I32]), found: Box::new([top_type, second_type]) });
+                }
+
+                let a = self.builder.build_call(pop_i32, &[], "a").try_as_basic_value().left();
+                let Some(BasicValueEnum::IntValue(a)) = a else {
+                    return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", a), fn_name: POP_I32.to_owned() });
+                };
+
+                let b = self.builder.build_call(pop_i32, &[], "b").try_as_basic_value().left();
+                let Some(BasicValueEnum::IntValue(b)) = b else {
+                    return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", b), fn_name: POP_I32.to_owned() });
+                };
+
+                let sum = self.builder.build_int_add(a, b, "sum");
+                self.builder.build_call(push_i32, &[sum.into()], "");
+
+                type_stack.push(LLVMType::I32);
+                Ok(())
+            },
+            IntrinsicRoutine::MinusI32 => todo!(),
+            IntrinsicRoutine::Not => todo!(),
+            IntrinsicRoutine::Eq => todo!(),
+            IntrinsicRoutine::Swap => todo!(),
+            IntrinsicRoutine::Mod => todo!(),
+            IntrinsicRoutine::Drop => todo!(),
+            IntrinsicRoutine::Clone => todo!(),
+            IntrinsicRoutine::CloneOver => todo!(),
+            IntrinsicRoutine::GreaterThan => todo!(),
+            IntrinsicRoutine::StringConcat => todo!(),
         }
     }
 
