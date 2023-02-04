@@ -34,9 +34,11 @@ enum LLVMType {
     Bool
 }
 
+const PUSH_I16: &str = "push_i16";
 const PUSH_I32: &str = "push_i32";
 const PUSH_I64: &str = "push_i64";
 const PUSH_BYTE: &str = "push_byte";
+const POP_I16: &str = "pop_i16";
 const POP_I32: &str = "pop_i32";
 const POP_I64: &str = "pop_i64";
 const POP_BYTE: &str = "pop_byte";
@@ -44,6 +46,7 @@ const POP_BYTE: &str = "pop_byte";
 const PRINT_STR: &str = "print_str";
 const PRINT_I32: &str = "print_i32";
 const PRINT_BOOL: &str = "print_bool";
+const PRINT_CHAR: &str = "print_char";
 
 const PRINTF: &str = "printf";
 const PRINT_D: &str = "print_d";
@@ -61,15 +64,18 @@ impl PileProgram {
         let context = Context::create();
         let mut code_gen = CodeGen::new(file_part, &context);
 
+        code_gen.build_push_int(2, PUSH_I16)?;
         code_gen.build_push_int(4, PUSH_I32)?;
         code_gen.build_push_int(8, PUSH_I64)?;
         code_gen.build_push_int(1, PUSH_BYTE)?;
+        code_gen.build_pop_int(2, POP_I16)?;
         code_gen.build_pop_int(4, POP_I32)?;
         code_gen.build_pop_int(8, POP_I64)?;
         code_gen.build_pop_int(1, POP_BYTE)?;
         code_gen.build_print_i32()?;
         code_gen.build_print_str()?;
         code_gen.build_print_bool()?;
+        code_gen.build_print_char()?;
 
         let mut type_stack = Vec::new();
 
@@ -110,6 +116,7 @@ const STACK_POINTER: &str = "stack_pointer";
 
 struct LLVMValueTypes<'a> {
     byte_type: IntType<'a>,
+    i16_type: IntType<'a>,
     i32_type: IntType<'a>,
     i64_type: IntType<'a>,
     void_type: VoidType<'a>,
@@ -127,6 +134,7 @@ impl<'ctx> CodeGen<'ctx> {
         let stack_type = byte_type.array_type(STACK_SIZE);
         let types = LLVMValueTypes {
             byte_type,
+            i16_type: context.i16_type(),
             i32_type: context.i32_type(),
             i64_type: context.i64_type(),
             void_type: context.void_type(),
@@ -174,6 +182,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn build_push_int(&self, bytes: u32, name: &str) -> Result<(), CompilerError> {
         let param_type = match bytes {
             1 => self.types.byte_type,
+            2 => self.types.i16_type,
             4 => self.types.i32_type,
             8 => self.types.i64_type,
             _ => return Err(CompilerError::InvalidIntByteLength(bytes)),
@@ -229,6 +238,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn build_pop_int(&self, bytes: u32, name: &str) -> Result<(), CompilerError> {
         let int_type = match bytes {
             1 => self.types.byte_type,
+            2 => self.types.i16_type,
             4 => self.types.i32_type,
             8 => self.types.i64_type,
             _ => return Err(CompilerError::InvalidIntByteLength(bytes)),
@@ -377,6 +387,28 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    fn build_print_char(&self) -> Result<(), CompilerError> {
+        let fn_type = self.types.i32_type.fn_type(&[self.types.i16_type.array_type(2).into()], false);
+        let fn_value = self.module.add_function(PRINT_CHAR, fn_type, None);
+        let entry_block = self.context.append_basic_block(fn_value, "entry");
+        self.builder.position_at_end(entry_block);
+
+        let bytes = fn_value.get_first_param().ok_or_else(|| CompilerError::MissingFirstParam(PRINT_CHAR.to_owned()))?;
+
+        let format_string = &self.context.const_string("%C".as_ref(), true);
+        let fmt_global_value = self.module.add_global(format_string.get_type(), Some(AddressSpace::from(0u16)), "true_str");
+        fmt_global_value.set_linkage(Linkage::Internal);
+        fmt_global_value.set_initializer(format_string);
+
+        let printf = self.module.get_function(PRINTF).ok_or_else(|| CompilerError::MissingRoutine(PRINTF.to_owned()))?;
+        let return_value = self.builder.build_call(printf, &[fmt_global_value.as_pointer_value().into(), bytes.into()], "return_value");
+        let return_value = return_value.try_as_basic_value().left().ok_or_else(|| CompilerError::MissingReturnValue(PRINTF.to_owned()))?;
+
+        self.builder.build_return(Some(&return_value));
+
+        Ok(())
+    }
+
     fn push_constant(&mut self, value: &Value, type_stack: &mut Vec<LLVMType>) -> Result<(), CompilerError> {
         match value {
             Value::String(str_value) => {
@@ -411,7 +443,22 @@ impl<'ctx> CodeGen<'ctx> {
 
                 Ok(())
             },
-            Value::Char(char_value) => todo!(),
+            Value::Char(char_value) => {
+                type_stack.push(LLVMType::Char);
+
+                let mut buffer = [0; 2];
+                char_value.encode_utf16(&mut buffer);
+
+                let first_16 = self.types.i16_type.const_int(buffer[0].into(), false);
+                let last_16 = self.types.i16_type.const_int(buffer[1].into(), false);
+
+                let push_i16 = self.module.get_function(PUSH_I16).ok_or_else(|| CompilerError::MissingRoutine(PUSH_I16.to_owned()))?;
+
+                self.builder.build_call(push_i16, &[first_16.into()], "");
+                self.builder.build_call(push_i16, &[last_16.into()], "");
+                
+                Ok(())
+            },
             Value::Bool(bool_value) => {
                 type_stack.push(LLVMType::Bool);
 
@@ -477,7 +524,28 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder.build_call(print_byte, &[byte_value.into()], "");
                     },
                     LLVMType::Char => {
-                        todo!()
+                        let pop_i16 = self.module.get_function(POP_I16).ok_or_else(|| CompilerError::MissingRoutine(POP_I16.to_owned()))?;
+                        let last_16 = self.builder.build_call(pop_i16, &[], "last_16").try_as_basic_value().left();
+                        let Some(BasicValueEnum::IntValue(last_16)) = last_16 else {
+                            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", last_16), fn_name: POP_I16.to_owned() });
+                        };
+                        let first_16 = self.builder.build_call(pop_i16, &[], "first_16").try_as_basic_value().left();
+                        let Some(BasicValueEnum::IntValue(first_16)) = first_16 else {
+                            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", first_16), fn_name: POP_I16.to_owned() });
+                        };
+
+                        let array_value = self.types.i16_type.array_type(2).const_zero();
+                        let array_value = self.builder.build_insert_value(array_value, first_16, 0, "char_bytes").ok_or_else(
+                            || CompilerError::InvalidInsertValueResult { expected: "array".to_owned(), found: "None".to_owned() })?;
+                        let array_value = self.builder.build_insert_value(array_value, last_16, 1, "char_bytes");
+                        let Some(AggregateValueEnum::ArrayValue(array_value)) = array_value else {
+                            return Err(CompilerError::InvalidInsertValueResult { expected: "array".to_owned(), found: format!("{:?}", array_value).to_owned() });
+                        };
+
+                        // let array_value = self.types.i16_type.const_array(&[first_16, last_16]);
+
+                        let print_char = self.module.get_function(PRINT_CHAR).ok_or_else(|| CompilerError::MissingRoutine(PRINT_CHAR.to_owned()))?;
+                        self.builder.build_call(print_char, &[array_value.into()], "");
                     }
                 }
 
