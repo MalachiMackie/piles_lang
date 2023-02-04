@@ -4,7 +4,7 @@ use inkwell::context::{Context};
 use inkwell::types::{IntType, VoidType, PointerType, ArrayType};
 use inkwell::module::{Module, Linkage};
 use inkwell::AddressSpace;
-use inkwell::values::{AnyValue, AsValueRef, BasicValueEnum, BasicValue, PointerValue, ArrayValue, IntValue, AggregateValueEnum};
+use inkwell::values::{AnyValue, AsValueRef, BasicValueEnum, BasicValue, PointerValue, ArrayValue, IntValue, AggregateValueEnum, FunctionValue};
 use crate::{Type, Token};
 use crate::{PileProgram, Value, routines::{Routine, IntrinsicRoutine}};
 use std::collections::VecDeque;
@@ -484,16 +484,23 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn call_intrinsic(&self, routine: &IntrinsicRoutine, type_stack: &mut Vec<LLVMType>) -> Result<(), CompilerError> {
-        let pop_i16 = self.module.get_function(POP_I16).ok_or_else(|| CompilerError::MissingRoutine(POP_I16.to_owned()))?;
-        let pop_i64 = self.module.get_function(POP_I64).ok_or_else(|| CompilerError::MissingRoutine(POP_I64.to_owned()))?;
-        let pop_i32 = self.module.get_function(POP_I32).ok_or_else(|| CompilerError::MissingRoutine(POP_I32.to_owned()))?;
 
-        let push_i32 = self.module.get_function(PUSH_I32).ok_or_else(|| CompilerError::MissingRoutine(PUSH_I32.to_owned()))?;
+        fn get_function<'a>(code_gen: &'a CodeGen, name: &'static str) -> Result<FunctionValue<'a>, CompilerError> {
+            code_gen.module.get_function(name).ok_or_else(|| CompilerError::MissingRoutine(name.to_owned()))
+        }
 
-        let print_str = self.module.get_function(PRINT_STR).ok_or_else(|| CompilerError::MissingRoutine(PRINT_STR.to_owned()))?;
-        let print_i32 = self.module.get_function(PRINT_I32).ok_or_else(|| CompilerError::MissingRoutine(PRINT_I32.to_owned()))?;
-        let print_bool = self.module.get_function(PRINT_BOOL).ok_or_else(|| CompilerError::MissingRoutine(PRINT_BOOL.to_owned()))?;
-        let print_char = self.module.get_function(PRINT_CHAR).ok_or_else(|| CompilerError::MissingRoutine(PRINT_CHAR.to_owned()))?;
+        let pop_byte = get_function(self, POP_BYTE)?;
+        let pop_i16 = get_function(self, POP_I16)?;
+        let pop_i64 = get_function(self, POP_I64)?;
+        let pop_i32 = get_function(self, POP_I32)?;
+
+        let push_byte = get_function(self, PUSH_BYTE)?;
+        let push_i32 = get_function(self, PUSH_I32)?;
+
+        let print_str = get_function(self, PRINT_STR)?;
+        let print_i32 = get_function(self, PRINT_I32)?;
+        let print_bool = get_function(self, PRINT_BOOL)?;
+        let print_char = get_function(self, PRINT_CHAR)?;
         match routine {
             IntrinsicRoutine::Print => {
                 let top_type = type_stack.pop().expect("Type stack should not be empty");
@@ -521,7 +528,6 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder.build_call(print_i32, &[int_value.into()], "");
                     }
                     LLVMType::Bool => {
-                        let pop_byte = self.module.get_function(POP_BYTE).ok_or_else(|| CompilerError::MissingRoutine(POP_BYTE.to_owned()))?;
                         let byte_value = self.builder.build_call(pop_byte, &[], "byte_value").try_as_basic_value().left();
                         let Some(BasicValueEnum::IntValue(byte_value)) = byte_value else {
                             return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", byte_value), fn_name: POP_BYTE.to_owned() });
@@ -584,8 +590,49 @@ impl<'ctx> CodeGen<'ctx> {
                 type_stack.push(LLVMType::I32);
                 Ok(())
             },
-            IntrinsicRoutine::MinusI32 => todo!(),
-            IntrinsicRoutine::Not => todo!(),
+            IntrinsicRoutine::MinusI32 => {
+                let top_type = type_stack.pop();
+                let second_type = type_stack.pop();
+                if !matches!((top_type, second_type), (Some(LLVMType::I32), Some(LLVMType::I32))) {
+                    return Err(CompilerError::InvalidTypeStackTypes { expected: Box::new([LLVMType::I32, LLVMType::I32]), found: Box::new([top_type, second_type]) });
+                }
+
+                let a = self.builder.build_call(pop_i32, &[], "a").try_as_basic_value().left();
+                let Some(BasicValueEnum::IntValue(a)) = a else {
+                    return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", a), fn_name: POP_I32.to_owned() });
+                };
+
+                let b = self.builder.build_call(pop_i32, &[], "b").try_as_basic_value().left();
+                let Some(BasicValueEnum::IntValue(b)) = b else {
+                    return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", b), fn_name: POP_I32.to_owned() });
+                };
+
+                let difference = self.builder.build_int_sub(a, b, "difference");
+                self.builder.build_call(push_i32, &[difference.into()], "");
+
+                type_stack.push(LLVMType::I32);
+
+                Ok(())
+            },
+            IntrinsicRoutine::Not => {
+                let top_type = type_stack.pop();
+                if !matches!(top_type, Some(LLVMType::Bool)) {
+                    return Err(CompilerError::InvalidTypeStackTypes { expected: Box::new([LLVMType::Bool]), found: Box::new([top_type]) });
+                }
+
+                let a = self.builder.build_call(pop_byte, &[], "a").try_as_basic_value().left();
+                let Some(BasicValueEnum::IntValue(a)) = a else {
+                    return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", a), fn_name: POP_I32.to_owned() });
+                };
+
+                let const_one = self.types.byte_type.const_int(1, false);
+                let inverted = self.builder.build_int_sub(const_one, a, "inverted");
+
+                self.builder.build_call(push_byte, &[inverted.into()], "");
+                type_stack.push(LLVMType::Bool);
+
+                Ok(())
+            },
             IntrinsicRoutine::Eq => todo!(),
             IntrinsicRoutine::Swap => todo!(),
             IntrinsicRoutine::Mod => todo!(),
