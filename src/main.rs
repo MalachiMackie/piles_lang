@@ -50,9 +50,7 @@ fn main() {
     };
 
     let mut contents = String::new();
-    println!("{}", file_name);
     let mut file = std::fs::File::open(&file_name).unwrap();
-    println!("{}", contents);
     file.read_to_string(&mut contents).unwrap();
 
     let program = match PileProgram::parse(&contents) {
