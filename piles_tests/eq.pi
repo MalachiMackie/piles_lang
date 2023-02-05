@@ -1,7 +1,19 @@
-10 10 !eq if {
-	"10 == 10" !print !println
-}
+// 10 10 !eq if {
+	// "10 == 10" !print !println
+// }
 
-10 5 !eq if {
-	"10 == 5" !print !println
-}
+// 10 5 !eq if {
+	// "10 == 5" !print !println
+// }
+
+10 10 !eq !print !println
+10 5 !eq !print !println
+
+true true !eq !print !println
+true false !eq !print !println
+false false !eq !print !println
+false true !eq !print !println
+
+'a' 'a' !eq !print !println
+'a' 'b' !eq !print !println
+'a' 'A' !eq !print !println

@@ -13,6 +13,7 @@ use std::collections::VecDeque;
 #[allow(unused)]
 #[derive(Debug)]
 pub(crate) enum CompilerError{
+    EmptyTypeStack,
     MissingRoutine(String),
     MissingGlobal(String),
     PrintToFileFailure(String),
@@ -25,26 +26,34 @@ pub(crate) enum CompilerError{
     InvalidExtractType { expected: String, found: String },
     InvalidReturnValue { expected: String, found: String, fn_name: String },
     InvalidTypeStackTypes { expected: Box<[LLVMType]>, found: Box<[Option<LLVMType>]> },
+
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum LLVMString {
+    Constant,
+    Stack,
+}
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum LLVMType {
-    ConstString,
-    String,
+    String(LLVMString),
     I32,
     Char,
     Bool
 }
 
+const PUSH_BOOL: &str = "push_bool";
+const PUSH_BYTE: &str = "push_byte";
 const PUSH_I16: &str = "push_i16";
 const PUSH_I32: &str = "push_i32";
 const PUSH_I64: &str = "push_i64";
-const PUSH_BYTE: &str = "push_byte";
+
+const POP_BOOL: &str = "pop_bool";
+const POP_BYTE: &str = "pop_byte";
 const POP_I16: &str = "pop_i16";
 const POP_I32: &str = "pop_i32";
 const POP_I64: &str = "pop_i64";
-const POP_BYTE: &str = "pop_byte";
 
 const PRINT_STR: &str = "print_str";
 const PRINT_I32: &str = "print_i32";
@@ -71,10 +80,14 @@ impl PileProgram {
         code_gen.build_push_int(4, PUSH_I32)?;
         code_gen.build_push_int(8, PUSH_I64)?;
         code_gen.build_push_int(1, PUSH_BYTE)?;
+        code_gen.build_push_bool()?;
+
         code_gen.build_pop_int(2, POP_I16)?;
         code_gen.build_pop_int(4, POP_I32)?;
         code_gen.build_pop_int(8, POP_I64)?;
         code_gen.build_pop_int(1, POP_BYTE)?;
+        code_gen.build_pop_bool()?;
+
         code_gen.build_print_i32()?;
         code_gen.build_print_str()?;
         code_gen.build_print_bool()?;
@@ -118,6 +131,7 @@ const STACK_SIZE: u32 = 1024u32;
 const STACK_POINTER: &str = "stack_pointer";
 
 struct LLVMValueTypes<'a> {
+    bool_type: IntType<'a>,
     byte_type: IntType<'a>,
     i16_type: IntType<'a>,
     i32_type: IntType<'a>,
@@ -136,6 +150,7 @@ impl<'ctx> CodeGen<'ctx> {
         let byte_type = context.i8_type();
         let stack_type = byte_type.array_type(STACK_SIZE);
         let types = LLVMValueTypes {
+            bool_type: context.bool_type(),
             byte_type,
             i16_type: context.i16_type(),
             i32_type: context.i32_type(),
@@ -234,6 +249,48 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.builder.build_store(stack_pointer, new_stack_pointer);
         self.builder.build_return(None);
+
+        Ok(())
+    }
+
+    fn build_push_bool(&self) -> Result<(), CompilerError> {
+        let fn_type = self.types.void_type.fn_type(&[self.types.bool_type.into()], false);
+        let fn_value = self.module.add_function(PUSH_BOOL, fn_type, None);
+        let entry_block = self.context.append_basic_block(fn_value, "entry");
+        self.builder.position_at_end(entry_block);
+
+        let bool_value = fn_value.get_first_param();
+        let Some(BasicValueEnum::IntValue(bool_value)) = bool_value else {
+            return Err(CompilerError::InvalidParamType { expected: "int".to_owned(), found: format!("{:?}", bool_value), fn_name: PUSH_BOOL.to_owned() });
+        };
+
+        let push_byte = self.module.get_function(PUSH_BYTE).ok_or_else(|| CompilerError::MissingRoutine(PUSH_BYTE.to_owned()))?;
+
+        let byte = self.builder.build_int_z_extend(bool_value, self.types.byte_type, "bool_extended");
+
+        self.builder.build_call(push_byte, &[byte.into()], "");
+
+        self.builder.build_return(None);
+
+        Ok(())
+    }
+
+    fn build_pop_bool(&self) -> Result<(), CompilerError> {
+        let fn_type = self.types.bool_type.fn_type(&[], false);
+        let fn_value = self.module.add_function(POP_BOOL, fn_type, None);
+        let entry_block = self.context.append_basic_block(fn_value, "entry");
+        self.builder.position_at_end(entry_block);
+
+        let pop_byte = self.module.get_function(POP_BYTE).ok_or_else(|| CompilerError::MissingRoutine(POP_BYTE.to_owned()))?;
+
+        let byte = self.builder.build_call(pop_byte, &[], "byte");
+        let Some(BasicValueEnum::IntValue(byte)) = byte.try_as_basic_value().left() else {
+            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", byte), fn_name: POP_BYTE.to_owned() });
+        };
+
+        let bool_value = self.builder.build_int_cast(byte, self.types.bool_type, "bool");
+
+        self.builder.build_return(Some(&bool_value));
 
         Ok(())
     }
@@ -363,9 +420,7 @@ impl<'ctx> CodeGen<'ctx> {
             return Err(CompilerError::InvalidParamType { expected: "int".to_owned(), found: format!("{:?}", byte_value), fn_name: PRINT_BOOL.to_owned() });
         };
 
-        let true_value = self.types.byte_type.const_int(1, false);
-
-        let is_true = self.builder.build_int_compare(IntPredicate::EQ, byte_value, true_value, "is_true");
+        let is_true = self.builder.build_int_cast(byte_value, self.types.bool_type, "is_true");
 
         self.builder.build_conditional_branch(is_true, is_true_block, is_false_block);
 
@@ -415,7 +470,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn push_constant(&mut self, value: &Value, type_stack: &mut Vec<LLVMType>) -> Result<(), CompilerError> {
         match value {
             Value::String(str_value) => {
-                type_stack.push(LLVMType::ConstString);
+                type_stack.push(LLVMType::String(LLVMString::Constant));
                 let global_name = format!("string_{}", self.global_strings.len());
                 let const_string = &self.context.const_string(str_value.as_ref(), true);
                 let global_value = self.module.add_global(const_string.get_type(), Some(AddressSpace::from(0u16)), &global_name);
@@ -466,11 +521,12 @@ impl<'ctx> CodeGen<'ctx> {
                 type_stack.push(LLVMType::Bool);
 
                 let bool_value: u64 = (*bool_value).into();
-                
-                let byte = self.types.byte_type.const_int(bool_value, false);
-                let push_byte = self.module.get_function(PUSH_BYTE).ok_or_else(|| CompilerError::MissingRoutine(PUSH_BYTE.to_owned()))?;
 
-                self.builder.build_call(push_byte, &[byte.into()], "");
+                let llvm_bool = self.types.bool_type.const_int(bool_value, false);
+                
+                let push_bool = self.module.get_function(PUSH_BOOL).ok_or_else(|| CompilerError::MissingRoutine(PUSH_BOOL.to_owned()))?;
+
+                self.builder.build_call(push_bool, &[llvm_bool.into()], "");
 
                 Ok(())
             },
@@ -489,11 +545,13 @@ impl<'ctx> CodeGen<'ctx> {
             code_gen.module.get_function(name).ok_or_else(|| CompilerError::MissingRoutine(name.to_owned()))
         }
 
+        let pop_bool = get_function(self, POP_BOOL)?;
         let pop_byte = get_function(self, POP_BYTE)?;
         let pop_i16 = get_function(self, POP_I16)?;
         let pop_i64 = get_function(self, POP_I64)?;
         let pop_i32 = get_function(self, POP_I32)?;
 
+        let push_bool = get_function(self, PUSH_BOOL)?;
         let push_byte = get_function(self, PUSH_BYTE)?;
         let push_i32 = get_function(self, PUSH_I32)?;
 
@@ -506,7 +564,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let top_type = type_stack.pop().expect("Type stack should not be empty");
 
                 match top_type {
-                    LLVMType::ConstString => {
+                    LLVMType::String(LLVMString::Constant) => {
                         let str_ptr_int = self.builder.build_call(pop_i64, &[], "str_ptr").try_as_basic_value().left();
                         let Some(BasicValueEnum::IntValue(str_ptr_int)) = str_ptr_int else {
                             return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", str_ptr_int), fn_name: POP_I64.to_owned() });
@@ -516,7 +574,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                         self.builder.build_call(print_str, &[str_ptr.into()], "");
                     },
-                    LLVMType::String => {
+                    LLVMType::String(LLVMString::Stack) => {
                         todo!();
                     },
                     LLVMType::I32 => {
@@ -620,20 +678,93 @@ impl<'ctx> CodeGen<'ctx> {
                     return Err(CompilerError::InvalidTypeStackTypes { expected: Box::new([LLVMType::Bool]), found: Box::new([top_type]) });
                 }
 
-                let a = self.builder.build_call(pop_byte, &[], "a").try_as_basic_value().left();
+                let a = self.builder.build_call(pop_bool, &[], "a").try_as_basic_value().left();
                 let Some(BasicValueEnum::IntValue(a)) = a else {
-                    return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", a), fn_name: POP_I32.to_owned() });
+                    return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", a), fn_name: POP_BOOL.to_owned() });
                 };
 
-                let const_one = self.types.byte_type.const_int(1, false);
-                let inverted = self.builder.build_int_sub(const_one, a, "inverted");
+                let const_true = self.types.bool_type.const_int(1, false);
+                let inverted = self.builder.build_int_sub(const_true, a, "inverted");
 
-                self.builder.build_call(push_byte, &[inverted.into()], "");
+                self.builder.build_call(push_bool, &[inverted.into()], "");
                 type_stack.push(LLVMType::Bool);
 
                 Ok(())
             },
-            IntrinsicRoutine::Eq => todo!(),
+            IntrinsicRoutine::Eq => {
+                let Some(top_type) = type_stack.pop() else {
+                    return Err(CompilerError::EmptyTypeStack);
+                };
+                let second_type = type_stack.pop();
+                match (top_type, second_type) {
+                    (LLVMType::String(_), Some(LLVMType::String(_))) => (),
+                    _ if second_type != Some(top_type) => {
+                        return Err(CompilerError::InvalidTypeStackTypes { expected: Box::new([top_type, top_type]), found: Box::new([Some(top_type), second_type]) });
+                    },
+                    _ => ()
+                }
+                 
+                match top_type {
+                    LLVMType::I32 => {
+                        let a = self.builder.build_call(pop_i32, &[], "a").try_as_basic_value().left();
+                        let Some(BasicValueEnum::IntValue(a)) = a else {
+                            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", a), fn_name: POP_I32.to_owned() });
+                        };
+                        let b = self.builder.build_call(pop_i32, &[], "b").try_as_basic_value().left();
+                        let Some(BasicValueEnum::IntValue(b)) = b else {
+                            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", b), fn_name: POP_I32.to_owned() });
+                        };
+
+                        let eq = self.builder.build_int_compare(IntPredicate::EQ, a, b, "eq");
+                        self.builder.build_call(push_bool, &[eq.into()], "");
+                    },
+                    LLVMType::Bool => {
+                        let a = self.builder.build_call(pop_bool, &[], "a").try_as_basic_value().left();
+                        let Some(BasicValueEnum::IntValue(a)) = a else {
+                            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", a), fn_name: POP_BOOL.to_owned() });
+                        };
+                        let b = self.builder.build_call(pop_bool, &[], "b").try_as_basic_value().left();
+                        let Some(BasicValueEnum::IntValue(b)) = b else {
+                            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", b), fn_name: POP_BOOL.to_owned() });
+                        };
+
+                        let eq = self.builder.build_int_compare(IntPredicate::EQ, a, b, "eq");
+                        self.builder.build_call(push_bool, &[eq.into()], "");
+
+                    },
+                    LLVMType::Char => {
+                        let a1 = self.builder.build_call(pop_i16, &[], "a1").try_as_basic_value().left();
+                        let Some(BasicValueEnum::IntValue(a1)) = a1 else {
+                            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", a1), fn_name: POP_I16.to_owned() });
+                        };
+                        
+                        let a2 = self.builder.build_call(pop_i16, &[], "a2").try_as_basic_value().left();
+                        let Some(BasicValueEnum::IntValue(a2)) = a2 else {
+                            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", a2), fn_name: POP_I16.to_owned() });
+                        };
+
+                        let b1 = self.builder.build_call(pop_i16, &[], "b1").try_as_basic_value().left();
+                        let Some(BasicValueEnum::IntValue(b1)) = b1 else {
+                            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", b1), fn_name: POP_I16.to_owned() });
+                        };
+
+                        let b2 = self.builder.build_call(pop_i16, &[], "b2").try_as_basic_value().left();
+                        let Some(BasicValueEnum::IntValue(b2)) = b2 else {
+                            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", b2), fn_name: POP_I16.to_owned() });
+                        };
+
+                        let eq1 = self.builder.build_int_compare(IntPredicate::EQ, a1, b1, "eq1");
+                        let eq2 = self.builder.build_int_compare(IntPredicate::EQ, a2, b2, "eq2");
+                        let eq = self.builder.build_and(eq1, eq2, "eq");
+                        self.builder.build_call(push_bool, &[eq.into()], "eq");
+                    },
+                    LLVMType::String(_) => todo!("string comparison")
+                }
+
+                type_stack.push(LLVMType::Bool);
+
+                Ok(())
+            },
             IntrinsicRoutine::Swap => todo!(),
             IntrinsicRoutine::Mod => todo!(),
             IntrinsicRoutine::Drop => todo!(),
