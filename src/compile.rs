@@ -1,10 +1,10 @@
 use inkwell::{OptimizationLevel, IntPredicate};
 use inkwell::builder::Builder;
 use inkwell::context::{Context};
-use inkwell::types::{IntType, VoidType, PointerType, ArrayType};
+use inkwell::types::{IntType, VoidType, PointerType, ArrayType, BasicType};
 use inkwell::module::{Module, Linkage};
 use inkwell::AddressSpace;
-use inkwell::values::{AnyValue, AsValueRef, BasicValueEnum, BasicValue, PointerValue, ArrayValue, IntValue, AggregateValueEnum, FunctionValue};
+use inkwell::values::{AnyValue, AsValueRef, BasicValueEnum, BasicValue, PointerValue, ArrayValue, IntValue, AggregateValueEnum, FunctionValue, BasicMetadataValueEnum};
 use crate::{Type, Token};
 use crate::{PileProgram, Value, routines::{Routine, IntrinsicRoutine}};
 use std::collections::VecDeque;
@@ -26,7 +26,6 @@ pub(crate) enum CompilerError{
     InvalidExtractType { expected: String, found: String },
     InvalidReturnValue { expected: String, found: String, fn_name: String },
     InvalidTypeStackTypes { expected: Box<[LLVMType]>, found: Box<[Option<LLVMType>]> },
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -54,14 +53,24 @@ const POP_BYTE: &str = "pop_byte";
 const POP_I16: &str = "pop_i16";
 const POP_I32: &str = "pop_i32";
 const POP_I64: &str = "pop_i64";
+const POP_STACK_STR_PTR: &str = "pop_stack_str";
+const POP_CONST_STR_PTR: &str = "pop_const_str";
 
 const PRINT_STR: &str = "print_str";
 const PRINT_I32: &str = "print_i32";
 const PRINT_BOOL: &str = "print_bool";
 const PRINT_CHAR: &str = "print_char";
 
+
+const STR_CONCAT: &str = "str_concat";
+
 const PRINTF: &str = "printf";
 const PRINT_D: &str = "print_d";
+const PRINT_S: &str = "print_s";
+
+const MALLOC: &str = "malloc";
+const FREE: &str = "free";
+
 
 impl PileProgram {
     pub(crate) fn compile(&self, file_name: &str) -> Result<(), CompilerError> {
@@ -92,6 +101,8 @@ impl PileProgram {
         code_gen.build_print_str()?;
         code_gen.build_print_bool()?;
         code_gen.build_print_char()?;
+
+        code_gen.build_str_concat()?;
 
         let mut type_stack = Vec::new();
 
@@ -175,6 +186,12 @@ impl<'ctx> CodeGen<'ctx> {
         stack_pointer.set_linkage(Linkage::Internal);
         stack_pointer.set_initializer(&types.byte_type.const_zero());
 
+        let malloc_type = types.byte_type.ptr_type(types.generic_address_space).fn_type(&[types.i32_type.into()], false);
+        module.add_function(MALLOC, malloc_type, Some(Linkage::External));
+
+        let free_type = types.void_type.fn_type(&[types.byte_type.ptr_type(types.generic_address_space).into()], false);
+        module.add_function(FREE, free_type, Some(Linkage::External));
+
         let printf_type = types.i32_type.fn_type(&[types.str_type.into()], true);
         module.add_function(PRINTF, printf_type, Some(Linkage::External));
 
@@ -188,6 +205,12 @@ impl<'ctx> CodeGen<'ctx> {
         print_d.set_linkage(Linkage::Internal);
         print_d.set_initializer(&print_d_value);
 
+        let print_s_value = context.const_string("%S".as_ref(), true);
+        let print_s = module.add_global(print_s_value.get_type(), Some(types.generic_address_space), PRINT_S);
+        print_s.set_linkage(Linkage::Internal);
+        print_s.set_initializer(&print_s_value);
+
+
         Self {
             context,
             module,
@@ -195,6 +218,10 @@ impl<'ctx> CodeGen<'ctx> {
             types,
             global_strings: Vec::new(),
         }
+    }
+
+    fn get_function(&self, name: &str) -> Result<FunctionValue, CompilerError> {
+        self.module.get_function(name).ok_or_else(|| CompilerError::MissingRoutine(name.to_owned()))
     }
 
     fn build_push_int(&self, bytes: u32, name: &str) -> Result<(), CompilerError> {
@@ -385,8 +412,10 @@ impl<'ctx> CodeGen<'ctx> {
         let printf = self.module.get_function(PRINTF).ok_or_else(|| CompilerError::MissingRoutine(PRINTF.to_owned()))?;
 
         let str_ptr = fn_value.get_first_param().ok_or_else(|| CompilerError::MissingFirstParam(PRINT_STR.to_owned()))?;
+
+        let print_s_ptr = self.module.get_global(PRINT_S).map(|g| g.as_pointer_value()).ok_or_else(|| CompilerError::MissingGlobal(PRINT_S.to_owned()))?;
         
-        let return_value = self.builder.build_call(printf, &[str_ptr.into()], "ret_value");
+        let return_value = self.builder.build_call(printf, &[print_s_ptr.into(), str_ptr.into()], "ret_value");
         let Some(return_value) = return_value.try_as_basic_value().left() else {
             return Err(CompilerError::MissingReturnValue(PRINTF.to_owned()));
         };
@@ -454,7 +483,7 @@ impl<'ctx> CodeGen<'ctx> {
         let bytes = fn_value.get_first_param().ok_or_else(|| CompilerError::MissingFirstParam(PRINT_CHAR.to_owned()))?;
 
         let format_string = &self.context.const_string("%C".as_ref(), true);
-        let fmt_global_value = self.module.add_global(format_string.get_type(), Some(AddressSpace::from(0u16)), "true_str");
+        let fmt_global_value = self.module.add_global(format_string.get_type(), Some(AddressSpace::from(0u16)), "print_c");
         fmt_global_value.set_linkage(Linkage::Internal);
         fmt_global_value.set_initializer(format_string);
 
@@ -467,15 +496,161 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    fn call_int_return<'a>(&'a self, fn_value: FunctionValue<'a>, args: &[BasicMetadataValueEnum<'a>], name: &str, fn_name: &str) -> Result<IntValue<'a>, CompilerError> {
+        let return_value = self.builder.build_call(fn_value, args, name);
+        if let Some(BasicValueEnum::IntValue(return_value)) = return_value.try_as_basic_value().left() {
+            Ok(return_value)
+        } else {
+            Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", return_value), fn_name: fn_name.to_owned() })
+        }
+    }
+    
+    fn call_ptr_return<'a>(&'a self, fn_value: FunctionValue<'a>, args: &[BasicMetadataValueEnum<'a>], name: &str, fn_name: &str) -> Result<PointerValue<'a>, CompilerError> {
+        let return_value = self.builder.build_call(fn_value, args, name);
+        if let Some(BasicValueEnum::PointerValue(return_value)) = return_value.try_as_basic_value().left() {
+            Ok(return_value)
+        } else {
+            Err(CompilerError::InvalidReturnValue { expected: "ptr".to_owned(), found: format!("{:?}", return_value), fn_name: fn_name.to_owned() })
+        }
+    }
+
+    fn load_int<'a, T : BasicType<'a>>(&'a self, pointee_type: T, ptr: PointerValue<'a>, name: &str) -> Result<IntValue<'a>, CompilerError> {
+        let load_result = self.builder.build_load(pointee_type, ptr, name);
+        if let BasicValueEnum::IntValue(int_value) = load_result {
+            Ok(int_value)
+        } else {
+            Err(CompilerError::InvalidLoadType { expected: "int".to_owned(), found: format!("{:?}", load_result) })
+        }
+    }
+
+    fn build_str_concat(&self) -> Result<(), CompilerError> {
+        let fn_type = self.types.void_type.fn_type(&[], false);
+        let fn_value = self.module.add_function(STR_CONCAT, fn_type, None);
+        let entry_block = self.context.append_basic_block(fn_value, "entry");
+        self.builder.position_at_end(entry_block);
+
+        let push_i64 = self.get_function(PUSH_I64)?;
+        let push_i32 = self.get_function(PUSH_I32)?;
+        let pop_i32 = self.get_function(POP_I32)?;
+        let pop_i64 = self.get_function(POP_I64)?;
+        let malloc = self.get_function(MALLOC)?;
+
+        let b_len = self.call_int_return(pop_i32, &[], "b_len", POP_I32)?;
+        let b_ptr_int = self.call_int_return(pop_i64, &[], "b_ptr_int", POP_I64)?;
+        let b_ptr = self.builder.build_int_to_ptr(b_ptr_int, self.types.str_type, "b_ptr");
+
+        let a_len = self.call_int_return(pop_i32, &[], "a_len", POP_I32)?;
+        let a_ptr_int = self.call_int_return(pop_i64, &[], "a_ptr_int", POP_I64)?;
+        let a_ptr = self.builder.build_int_to_ptr(a_ptr_int, self.types.str_type, "a_ptr");
+
+        let length_i16 = self.builder.build_int_add(a_len, b_len, "length_chars");
+        // minus 1 char because both strings will be null terminated, but we only want one null
+        let length_16 = self.builder.build_int_sub(length_i16, self.types.i32_type.const_int(1, false), "length_chars");
+
+        let length_bytes = self.builder.build_int_mul(length_i16, self.types.i32_type.const_int(2, false), "length_bytes");
+
+        let new_ptr = self.call_ptr_return(malloc, &[length_bytes.into()], "new_ptr", MALLOC)?;
+
+        let new_ptr_int = self.builder.build_ptr_to_int(new_ptr, self.types.i64_type, "new_ptr_int");
+
+        self.builder.build_call(push_i64, &[new_ptr_int.into()], "");
+        self.builder.build_call(push_i32, &[length_16.into()], "");
+
+        let counter_ptr = self.builder.build_alloca(self.types.i32_type, "counter");
+        self.builder.build_store(counter_ptr, self.types.i32_type.const_zero());
+
+        let a_i16_to_load = self.builder.build_int_sub(a_len, self.types.i32_type.const_int(1, false), "a_bytes_to_load");
+
+        let loop_a_block = self.context.insert_basic_block_after(entry_block, "loop_a");
+        let loop_a_end_block = self.context.insert_basic_block_after(loop_a_block, "loop_a_end");
+        self.builder.build_unconditional_branch(loop_a_block);
+        self.builder.position_at_end(loop_a_block);
+
+        let current_count = self.load_int(self.types.i32_type, counter_ptr, "current_count")?;
+
+        let next_count = self.builder.build_int_add(current_count, self.types.i32_type.const_int(1, false), "next_count");
+        self.builder.build_store(counter_ptr, next_count);
+
+        let a_ptr_to_load;
+        unsafe {
+            a_ptr_to_load = self.builder.build_gep(self.types.i16_type, a_ptr, &[current_count], "a_ptr_to_load");
+        }
+
+        let a_i16 = self.load_int(self.types.i16_type, a_ptr_to_load, "a_byte")?;
+
+        let new_ptr_to_store;
+        unsafe {
+            new_ptr_to_store = self.builder.build_gep(self.types.i16_type, new_ptr, &[current_count], "new_ptr");
+        }
+        self.builder.build_store(new_ptr_to_store, a_i16);
+
+        let exit_count = self.builder.build_int_sub(a_i16_to_load, self.types.i32_type.const_int(1, false), "exit_count");
+        let is_count = self.builder.build_int_compare(IntPredicate::EQ, current_count, exit_count, "is_count");
+        self.builder.build_conditional_branch(is_count, loop_a_end_block, loop_a_block);
+
+        self.builder.build_unconditional_branch(loop_a_end_block);
+        self.builder.position_at_end(loop_a_end_block);
+
+        let loop_b_block = self.context.insert_basic_block_after(loop_a_end_block, "loop_b");
+        let loop_b_end_block = self.context.insert_basic_block_after(loop_b_block, "loop_b_end");
+        self.builder.build_unconditional_branch(loop_b_block);
+        self.builder.position_at_end(loop_b_block);
+
+        let current_count = self.load_int(self.types.i32_type, counter_ptr, "current_count")?;
+
+        let next_count = self.builder.build_int_add(current_count, self.types.i32_type.const_int(1, false), "next_count");
+        self.builder.build_store(counter_ptr, next_count);
+
+        let b_ptr_to_load;
+        let b_offset = self.builder.build_int_sub(current_count, a_i16_to_load, "b_offset");
+
+        unsafe {
+            b_ptr_to_load = self.builder.build_gep(self.types.i16_type, b_ptr, &[b_offset], "b_ptr_to_load");
+        }
+
+        let b_byte = self.load_int(self.types.i16_type, b_ptr_to_load, "b_byte")?;
+
+        let new_ptr_to_store;
+        unsafe {
+            new_ptr_to_store = self.builder.build_gep(self.types.i16_type, new_ptr, &[current_count], "new_ptr_to_store");
+        }
+
+        self.builder.build_store(new_ptr_to_store, b_byte);
+
+        let exit_count = self.builder.build_int_sub(length_i16, self.types.i32_type.const_int(2, false), "exit_count");
+        let is_count = self.builder.build_int_compare(IntPredicate::EQ, current_count, exit_count, "is_count");
+
+        self.builder.build_conditional_branch(is_count, loop_b_end_block, loop_b_block);
+
+        self.builder.position_at_end(loop_b_end_block);
+
+        self.builder.build_return(None);
+
+        Ok(())
+    }
+
     fn push_constant(&mut self, value: &Value, type_stack: &mut Vec<LLVMType>) -> Result<(), CompilerError> {
         match value {
             Value::String(str_value) => {
                 type_stack.push(LLVMType::String(LLVMString::Constant));
                 let global_name = format!("string_{}", self.global_strings.len());
-                let const_string = &self.context.const_string(str_value.as_ref(), true);
-                let global_value = self.module.add_global(const_string.get_type(), Some(AddressSpace::from(0u16)), &global_name);
+
+                let utf16_encoded = str_value.encode_utf16();
+
+                let mut int_values: Vec<_> = utf16_encoded.map(|val| {
+                    self.types.i16_type.const_int(val.into(), false)
+                }).collect();
+
+                let const_zero = self.types.i16_type.const_zero();
+                int_values.extend([const_zero].into_iter());
+
+                let len_value = self.types.i32_type.const_int(int_values.len() as u64, false);
+
+                let const_array = &self.types.i16_type.const_array(int_values.into_boxed_slice().as_ref());
+
+                let global_value = self.module.add_global(const_array.get_type(), Some(AddressSpace::from(0u16)), &global_name);
                 global_value.set_linkage(Linkage::Internal);
-                global_value.set_initializer(const_string);
+                global_value.set_initializer(const_array);
 
                 let str_ptr = self.builder.build_pointer_cast(
                     global_value.as_pointer_value(),
@@ -485,10 +660,14 @@ impl<'ctx> CodeGen<'ctx> {
                 self.global_strings.push(global_name);
 
                 let ptr_int = self.builder.build_ptr_to_int(str_ptr, self.types.i64_type, "ptr_as_int");
+
                 let push_i64 = self.module.get_function(PUSH_I64).ok_or_else(|| CompilerError::MissingRoutine(PUSH_I64.to_owned()))?;
+
+                let push_i32 = self.module.get_function(PUSH_I32).ok_or_else(|| CompilerError::MissingRoutine(PUSH_I32.to_owned()))?;
                 
                 self.builder.build_call(push_i64, &[ptr_int.into()], "");
-                
+                self.builder.build_call(push_i32, &[len_value.into()], "");
+
                 Ok(())
             },
             Value::I32(i32_value) => {
@@ -541,30 +720,30 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn call_intrinsic(&self, routine: &IntrinsicRoutine, type_stack: &mut Vec<LLVMType>) -> Result<(), CompilerError> {
 
-        fn get_function<'a>(code_gen: &'a CodeGen, name: &'static str) -> Result<FunctionValue<'a>, CompilerError> {
-            code_gen.module.get_function(name).ok_or_else(|| CompilerError::MissingRoutine(name.to_owned()))
-        }
+        let pop_bool = self.get_function(POP_BOOL)?;
+        let pop_byte = self.get_function(POP_BYTE)?;
+        let pop_i16 = self.get_function(POP_I16)?;
+        let pop_i32 = self.get_function(POP_I32)?;
+        let pop_i64 = self.get_function(POP_I64)?;
 
-        let pop_bool = get_function(self, POP_BOOL)?;
-        let pop_byte = get_function(self, POP_BYTE)?;
-        let pop_i16 = get_function(self, POP_I16)?;
-        let pop_i64 = get_function(self, POP_I64)?;
-        let pop_i32 = get_function(self, POP_I32)?;
+        let push_bool = self.get_function(PUSH_BOOL)?;
+        let push_byte = self.get_function(PUSH_BYTE)?;
+        let push_i32 = self.get_function(PUSH_I32)?;
 
-        let push_bool = get_function(self, PUSH_BOOL)?;
-        let push_byte = get_function(self, PUSH_BYTE)?;
-        let push_i32 = get_function(self, PUSH_I32)?;
+        let print_str = self.get_function(PRINT_STR)?;
+        let print_i32 = self.get_function(PRINT_I32)?;
+        let print_bool = self.get_function(PRINT_BOOL)?;
+        let print_char = self.get_function(PRINT_CHAR)?;
 
-        let print_str = get_function(self, PRINT_STR)?;
-        let print_i32 = get_function(self, PRINT_I32)?;
-        let print_bool = get_function(self, PRINT_BOOL)?;
-        let print_char = get_function(self, PRINT_CHAR)?;
+        let str_concat = self.get_function(STR_CONCAT)?;
+
         match routine {
             IntrinsicRoutine::Print => {
                 let top_type = type_stack.pop().expect("Type stack should not be empty");
 
                 match top_type {
-                    LLVMType::String(LLVMString::Constant) => {
+                    LLVMType::String(string_type) => {
+                        let _ = self.builder.build_call(pop_i32, &[], "");
                         let str_ptr_int = self.builder.build_call(pop_i64, &[], "str_ptr").try_as_basic_value().left();
                         let Some(BasicValueEnum::IntValue(str_ptr_int)) = str_ptr_int else {
                             return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", str_ptr_int), fn_name: POP_I64.to_owned() });
@@ -573,9 +752,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let str_ptr = self.builder.build_int_to_ptr(str_ptr_int, self.types.str_type, "str_ptr");
 
                         self.builder.build_call(print_str, &[str_ptr.into()], "");
-                    },
-                    LLVMType::String(LLVMString::Stack) => {
-                        todo!();
+
+                        if let LLVMString::Stack = string_type {
+                            let free_memory = self.get_function(FREE)?;
+                            self.builder.build_call(free_memory, &[str_ptr.into()], "");
+                        }
                     },
                     LLVMType::I32 => {
                         let int_value = self.builder.build_call(pop_i32, &[], "int_value").try_as_basic_value().left();
@@ -771,7 +952,25 @@ impl<'ctx> CodeGen<'ctx> {
             IntrinsicRoutine::Clone => todo!(),
             IntrinsicRoutine::CloneOver => todo!(),
             IntrinsicRoutine::GreaterThan => todo!(),
-            IntrinsicRoutine::StringConcat => todo!(),
+            IntrinsicRoutine::StringConcat => {
+                let top_type = type_stack.pop();
+                let second_type = type_stack.pop();
+
+                let (top_str_type, second_str_type) = match (top_type, second_type) {
+                    (Some(LLVMType::String(top_str_type)), Some(LLVMType::String(second_str_type))) => Ok((top_str_type, second_str_type)),
+                    (Some(_), Some(_)) => Err(CompilerError::InvalidTypeStackTypes {
+                        expected: Box::new([LLVMType::String(LLVMString::Constant), LLVMType::String(LLVMString::Constant)]),
+                        found: Box::new([top_type, second_type]),
+                    }),
+                    _ => Err(CompilerError::EmptyTypeStack),
+                }?;
+
+                self.builder.build_call(str_concat, &[], STR_CONCAT);
+
+                type_stack.push(LLVMType::String(LLVMString::Stack));
+
+                Ok(())
+            }
         }
     }
 

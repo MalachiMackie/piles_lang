@@ -1,4 +1,6 @@
 "Hello World!" !print !println
+"Good Bye!" !print !println
+"Hi" !print !println
 'a' !print !println
 'b' !print !println
 '9' !print !println
