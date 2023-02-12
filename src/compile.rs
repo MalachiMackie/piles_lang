@@ -1,3 +1,4 @@
+use inkwell::targets::TargetTriple;
 use inkwell::{OptimizationLevel, IntPredicate};
 use inkwell::builder::Builder;
 use inkwell::context::{Context};
@@ -42,6 +43,7 @@ pub(crate) enum LLVMType {
     Bool
 }
 
+// todo: enum
 const PUSH_BOOL: &str = "push_bool";
 const PUSH_BYTE: &str = "push_byte";
 const PUSH_I16: &str = "push_i16";
@@ -53,16 +55,14 @@ const POP_BYTE: &str = "pop_byte";
 const POP_I16: &str = "pop_i16";
 const POP_I32: &str = "pop_i32";
 const POP_I64: &str = "pop_i64";
-const POP_STACK_STR_PTR: &str = "pop_stack_str";
-const POP_CONST_STR_PTR: &str = "pop_const_str";
 
 const PRINT_STR: &str = "print_str";
 const PRINT_I32: &str = "print_i32";
 const PRINT_BOOL: &str = "print_bool";
 const PRINT_CHAR: &str = "print_char";
 
-
 const STR_CONCAT: &str = "str_concat";
+const STR_COMPARE: &str = "str_compare";
 
 const PRINTF: &str = "printf";
 const PRINT_D: &str = "print_d";
@@ -103,6 +103,7 @@ impl PileProgram {
         code_gen.build_print_char()?;
 
         code_gen.build_str_concat()?;
+        code_gen.build_string_compare()?;
 
         let mut type_stack = Vec::new();
 
@@ -210,6 +211,8 @@ impl<'ctx> CodeGen<'ctx> {
         print_s.set_linkage(Linkage::Internal);
         print_s.set_initializer(&print_s_value);
 
+        let triple = TargetTriple::create("x86_64-pc-windows");
+        module.set_triple(&triple);
 
         Self {
             context,
@@ -629,6 +632,89 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    fn build_string_compare(&self) -> Result<(), CompilerError> {
+        let fn_type = self.types.void_type.fn_type(&[], false);
+        let fn_value = self.module.add_function(STR_COMPARE, fn_type, None);
+        let entry_block = self.context.append_basic_block(fn_value, "entry");
+
+        self.builder.position_at_end(entry_block);
+
+        let pop_i32 = self.get_function(POP_I32)?;
+        let pop_i64 = self.get_function(POP_I64)?;
+        let push_bool = self.get_function(PUSH_BOOL)?;
+
+        let a_len = self.call_int_return(pop_i32, &[], "a_len", POP_I32)?;
+        let a_ptr_int = self.call_int_return(pop_i64, &[], "a_ptr_int", POP_I64)?;
+ 
+        let b_len = self.call_int_return(pop_i32, &[], "b_len", POP_I32)?;
+        let b_ptr_int = self.call_int_return(pop_i64, &[], "b_ptr_int", POP_I64)?;       
+
+        let lengths_equal = self.builder.build_int_compare(IntPredicate::EQ, a_len, b_len, "lengths_equal");
+
+        let lengths_not_equal_block = self.context.insert_basic_block_after(entry_block, "lengths_not_equal");
+        let lengths_equal_block = self.context.insert_basic_block_after(lengths_not_equal_block, "lengths_equal");
+
+        self.builder.build_conditional_branch(lengths_equal, lengths_equal_block, lengths_not_equal_block);
+
+        self.builder.position_at_end(lengths_not_equal_block);
+        self.builder.build_call(push_bool, &[self.types.bool_type.const_int(0, false).into()], "");
+        self.builder.build_return(None);
+
+        self.builder.position_at_end(lengths_equal_block);
+
+        let a_ptr = self.builder.build_int_to_ptr(a_ptr_int, self.types.str_type, "a_ptr");
+        let b_ptr = self.builder.build_int_to_ptr(b_ptr_int, self.types.str_type, "b_ptr");
+        let counter = self.builder.build_alloca(self.types.i32_type, "counter_ptr");
+        self.builder.build_store(counter, self.types.i32_type.const_zero());
+
+        let loop_block = self.context.insert_basic_block_after(lengths_equal_block, "loop");
+        
+        self.builder.build_unconditional_branch(loop_block);
+
+        self.builder.position_at_end(loop_block);
+
+        let current_counter = self.load_int(self.types.i32_type, counter, "current_counter")?;
+        let next_counter = self.builder.build_int_add(current_counter, self.types.i32_type.const_int(1, false), "next_counter");
+        self.builder.build_store(counter, next_counter);
+
+        let a_ptr_to_load;
+        let b_ptr_to_load;
+        unsafe {
+            a_ptr_to_load = self.builder.build_gep(self.types.i16_type, a_ptr, &[current_counter], "a_ptr_to_load");
+            b_ptr_to_load = self.builder.build_gep(self.types.i16_type, b_ptr, &[current_counter], "b_ptr_to_load");
+        }
+
+        let a_i16 = self.load_int(self.types.i16_type, a_ptr_to_load, "a_i16")?;
+        let b_i16 = self.load_int(self.types.i16_type, b_ptr_to_load, "b_i16")?;
+
+        let i16_equal = self.builder.build_int_compare(IntPredicate::EQ, a_i16, b_i16, "i16_equal");
+
+        let not_equal_block = self.context.insert_basic_block_after(loop_block, "not_equal");
+        let equal_block = self.context.insert_basic_block_after(not_equal_block, "equal");
+
+        self.builder.build_conditional_branch(i16_equal, equal_block, not_equal_block);
+
+        self.builder.position_at_end(not_equal_block);
+        self.builder.build_call(push_bool, &[self.types.bool_type.const_int(0, false).into()], "");
+
+        self.builder.build_return(None);
+
+        self.builder.position_at_end(equal_block);
+
+        let exit_count = self.builder.build_int_sub(a_len, self.types.i32_type.const_int(1, false), "exit_count");
+        let at_end = self.builder.build_int_compare(IntPredicate::EQ, exit_count, current_counter, "at_end");
+
+        let loop_end = self.context.insert_basic_block_after(equal_block, "loop_end");
+
+        self.builder.build_conditional_branch(at_end, loop_end, loop_block);
+        self.builder.position_at_end(loop_end);
+
+        self.builder.build_call(push_bool, &[self.types.bool_type.const_int(1, false).into()], "");
+        self.builder.build_return(None);
+
+        Ok(())
+    }
+
     fn push_constant(&mut self, value: &Value, type_stack: &mut Vec<LLVMType>) -> Result<(), CompilerError> {
         match value {
             Value::String(str_value) => {
@@ -754,8 +840,9 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder.build_call(print_str, &[str_ptr.into()], "");
 
                         if let LLVMString::Stack = string_type {
-                            let free_memory = self.get_function(FREE)?;
-                            self.builder.build_call(free_memory, &[str_ptr.into()], "");
+                            // todo: figure out if we can free memory (might have been cloned);
+                            // let free_memory = self.get_function(FREE)?;
+                            // self.builder.build_call(free_memory, &[str_ptr.into()], "");
                         }
                     },
                     LLVMType::I32 => {
@@ -939,7 +1026,10 @@ impl<'ctx> CodeGen<'ctx> {
                         let eq = self.builder.build_and(eq1, eq2, "eq");
                         self.builder.build_call(push_bool, &[eq.into()], "eq");
                     },
-                    LLVMType::String(_) => todo!("string comparison")
+                    LLVMType::String(_) => {
+                        let str_compare = self.get_function(STR_COMPARE)?;
+                        self.builder.build_call(str_compare, &[], "");
+                    }
                 }
 
                 type_stack.push(LLVMType::Bool);

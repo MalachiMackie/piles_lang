@@ -17,3 +17,9 @@ false true !eq !print !println
 'a' 'a' !eq !print !println
 'a' 'b' !eq !print !println
 'a' 'A' !eq !print !println
+
+"Hello" "Hello" !eq !print !println
+"Hello" "HeLlo" !eq !print !println
+"Hello" "HellO" !eq !print !println
+"hi" "yo dog" !eq !print !println
+"Hello" "Hell" "o" !str_concat !eq !print !println
