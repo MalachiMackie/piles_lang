@@ -6,20 +6,25 @@
 	// "10 == 5" !print !println
 // }
 
-10 10 !eq !print !println
-10 5 !eq !print !println
+"format:" !print !println
+"actual == expected" !print !println
+!println
 
-true true !eq !print !println
-true false !eq !print !println
-false false !eq !print !println
-false true !eq !print !println
+10 10 !eq !print " == true" !print !println
+10 5 !eq !print " == false" !print !println
 
-'a' 'a' !eq !print !println
-'a' 'b' !eq !print !println
-'a' 'A' !eq !print !println
+true true !eq !print " == true" !print !println
+true false !eq !print " == false" !print !println
+false false !eq !print " == true" !print !println
+false true !eq !print " == false" !print !println
 
-"Hello" "Hello" !eq !print !println
-"Hello" "HeLlo" !eq !print !println
-"Hello" "HellO" !eq !print !println
-"hi" "yo dog" !eq !print !println
-"Hello" "Hell" "o" !str_concat !eq !print !println
+'a' 'a' !eq !print " == true" !print !println
+'a' 'b' !eq !print " == false" !print !println
+'a' 'A' !eq !print " == false" !print !println
+
+"Hello" "Hello" !eq !print " == true" !print !println
+"Hello" "HeLlo" !eq !print " == false" !print !println
+"Hello" "HellO" !eq !print " == false" !print !println
+"hi" "yo dog" !eq !print " == false" !print !println
+"Hello" "Hell" "o" !str_concat !eq !print " == true" !print !println
+"Hello" "Hell" "oo" !str_concat !eq !print " == false" !print !println
