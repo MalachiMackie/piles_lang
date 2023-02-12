@@ -1,0 +1,4 @@
+10 !clone !print " " !print !print !println
+'%' !clone !print " " !print !print !println
+true !clone !print " " !print !print !println
+"Hello World" !clone !print " " !print !print !println

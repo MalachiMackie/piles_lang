@@ -1,0 +1,6 @@
+true false !swap !print " " !print !print " == true false" !print !println
+'a' 'b' !swap !print " " !print !print " == a b" !print !println
+"Hi" "Bye" !swap !print " " !print !print " == Hi Bye" !print !println
+10 51 !swap !print " " !print !print " == 10 51" !print !println
+
+"Hi" 51 !swap !print " " !print !print " == Hi 51" !print !println

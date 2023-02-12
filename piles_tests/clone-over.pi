@@ -1,0 +1,5 @@
+10 51 !clone_over !print " " !print !print " " !print !print " == 10 51 10" !print !println
+true false !clone_over !print " " !print !print " " !print !print " == true false true" !print !println
+'C' '(' !clone_over !print " " !print !print " " !print !print " == C ( C" !print !println
+"Hi" "Bye" !clone_over !print " " !print !print " " !print !print " == Hi Bye Hi" !print !println
+

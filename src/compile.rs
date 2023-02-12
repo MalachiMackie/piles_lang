@@ -49,12 +49,14 @@ const PUSH_BYTE: &str = "push_byte";
 const PUSH_I16: &str = "push_i16";
 const PUSH_I32: &str = "push_i32";
 const PUSH_I64: &str = "push_i64";
+const PUSH_STR_PTR: &str = "push_str_ptr";
 
 const POP_BOOL: &str = "pop_bool";
 const POP_BYTE: &str = "pop_byte";
 const POP_I16: &str = "pop_i16";
 const POP_I32: &str = "pop_i32";
 const POP_I64: &str = "pop_i64";
+const POP_STR_PTR: &str = "pop_str_ptr";
 
 const PRINT_STR: &str = "print_str";
 const PRINT_I32: &str = "print_i32";
@@ -90,12 +92,14 @@ impl PileProgram {
         code_gen.build_push_int(8, PUSH_I64)?;
         code_gen.build_push_int(1, PUSH_BYTE)?;
         code_gen.build_push_bool()?;
+        code_gen.build_push_str_ptr()?;
 
         code_gen.build_pop_int(2, POP_I16)?;
         code_gen.build_pop_int(4, POP_I32)?;
         code_gen.build_pop_int(8, POP_I64)?;
         code_gen.build_pop_int(1, POP_BYTE)?;
         code_gen.build_pop_bool()?;
+        code_gen.build_pop_str_ptr()?;
 
         code_gen.build_print_i32()?;
         code_gen.build_print_str()?;
@@ -283,6 +287,26 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    fn build_push_str_ptr(&self) -> Result<(), CompilerError> {
+        let fn_type = self.types.void_type.fn_type(&[self.types.str_type.into()], false);
+        let fn_value = self.module.add_function(PUSH_STR_PTR, fn_type, None);
+        let entry_block = self.context.append_basic_block(fn_value, "entry");
+        self.builder.position_at_end(entry_block);
+
+        let str_ptr = fn_value.get_first_param();
+        let Some(BasicValueEnum::PointerValue(str_ptr)) = str_ptr else {
+            return Err(CompilerError::InvalidParamType { expected: "ptr".to_owned(), found: format!("{:?}", str_ptr), fn_name: PUSH_STR_PTR.to_owned() });
+        };
+
+        let str_ptr_int = self.builder.build_ptr_to_int(str_ptr, self.types.i64_type, "str_ptr_int");
+
+        let push_i64 = self.get_function(PUSH_I64)?;
+        self.builder.build_call(push_i64, &[str_ptr_int.into()], "");
+        self.builder.build_return(None);
+
+        Ok(())
+    }
+
     fn build_push_bool(&self) -> Result<(), CompilerError> {
         let fn_type = self.types.void_type.fn_type(&[self.types.bool_type.into()], false);
         let fn_value = self.module.add_function(PUSH_BOOL, fn_type, None);
@@ -301,6 +325,22 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.build_call(push_byte, &[byte.into()], "");
 
         self.builder.build_return(None);
+
+        Ok(())
+    }
+
+    fn build_pop_str_ptr(&self) -> Result<(), CompilerError> {
+        let fn_type = self.types.str_type.fn_type(&[], false);
+        let fn_value = self.module.add_function(POP_STR_PTR, fn_type, None);
+        let entry_block = self.context.append_basic_block(fn_value, "entry");
+        self.builder.position_at_end(entry_block);
+
+        let pop_i64 = self.get_function(POP_I64)?;
+        let str_i64 = self.call_int_return(pop_i64, &[], "str_i64", POP_I64)?;
+
+        let str_ptr = self.builder.build_int_to_ptr(str_i64, self.types.str_type, "str_ptr");
+
+        self.builder.build_return(Some(&str_ptr));
 
         Ok(())
     }
@@ -811,10 +851,13 @@ impl<'ctx> CodeGen<'ctx> {
         let pop_i16 = self.get_function(POP_I16)?;
         let pop_i32 = self.get_function(POP_I32)?;
         let pop_i64 = self.get_function(POP_I64)?;
+        let pop_str_ptr = self.get_function(POP_STR_PTR)?;
 
         let push_bool = self.get_function(PUSH_BOOL)?;
         let push_byte = self.get_function(PUSH_BYTE)?;
+        let push_i16 = self.get_function(PUSH_I16)?;
         let push_i32 = self.get_function(PUSH_I32)?;
+        let push_str_ptr = self.get_function(PUSH_STR_PTR)?;
 
         let print_str = self.get_function(PRINT_STR)?;
         let print_i32 = self.get_function(PRINT_I32)?;
@@ -823,6 +866,81 @@ impl<'ctx> CodeGen<'ctx> {
 
         let str_concat = self.get_function(STR_CONCAT)?;
 
+
+        let pop_value = |llvm_type: LLVMType| -> Result<Box<[BasicMetadataValueEnum]>, CompilerError> {
+            match llvm_type {
+                LLVMType::String(_) => {
+                    let str_len = self.call_int_return(pop_i32, &[], "str_len", POP_I32)?;
+                    let str_ptr = self.call_ptr_return(pop_str_ptr, &[], "str_ptr", POP_STR_PTR)?;
+
+                    Ok(Box::new([str_len.into(), str_ptr.into()]))
+                },
+                LLVMType::I32 => {
+                    let i32_value = self.call_int_return(pop_i32, &[], "i32_value", POP_I32)?;
+
+                    Ok(Box::new([i32_value.into()]))
+                },
+                LLVMType::Char => {
+                    let first_i16 = self.call_int_return(pop_i16, &[], "first_i16", POP_I16)?;
+                    let second_i16 = self.call_int_return(pop_i16, &[], "second_i16", POP_I16)?;
+
+                    Ok(Box::new([first_i16.into(), second_i16.into()]))
+                },
+                LLVMType::Bool => {
+                    let bool_value = self.call_int_return(pop_bool, &[], "bool", POP_BOOL)?;
+
+                    Ok(Box::new([bool_value.into()]))
+                }
+            }
+        };
+
+        let push_value = |value: Box<[BasicMetadataValueEnum]>, llvm_type: LLVMType| -> Result<(), CompilerError> {
+            let mut iter = value.iter();
+            match llvm_type {
+                LLVMType::String(_) => {
+                    let first = iter.next().ok_or(CompilerError::InvalidLoadType { expected: "int".to_owned(), found: "None".to_owned() })?;
+                    let second = iter.next().ok_or(CompilerError::InvalidLoadType { expected: "ptr".to_owned(), found: "None".to_owned() })?;
+
+                    let str_len = first.into_int_value();
+                    let str_ptr = second.into_pointer_value();
+
+                    self.builder.build_call(push_str_ptr, &[str_ptr.into()], "");
+                    self.builder.build_call(push_i32, &[str_len.into()], "");
+
+                    Ok(())
+                },
+                LLVMType::I32 => {
+                    let first = iter.next().ok_or(CompilerError::InvalidLoadType { expected: "int".to_owned(), found: "None".to_owned() })?;
+                    let i32_value = first.into_int_value();
+
+                    self.builder.build_call(push_i32, &[i32_value.into()], "");
+                            
+                    Ok(())
+                },
+                LLVMType::Bool => {
+                    let first = iter.next().ok_or(CompilerError::InvalidLoadType { expected: "int".to_owned(), found: "None".to_owned() })?;
+                    let bool_value = first.into_int_value();
+
+                    self.builder.build_call(push_bool, &[bool_value.into()], "");
+                            
+                    Ok(())
+
+                },
+                LLVMType::Char => {
+                    let first = iter.next().ok_or(CompilerError::InvalidLoadType { expected: "int".to_owned(), found: "None".to_owned() })?;
+                    let second = iter.next().ok_or(CompilerError::InvalidLoadType { expected: "ptr".to_owned(), found: "None".to_owned() })?;
+
+                    let first_i16 = first.into_int_value();
+                    let second_i16 = second.into_int_value();
+
+                    self.builder.build_call(push_i16, &[second_i16.into()], "");
+                    self.builder.build_call(push_i16, &[first_i16.into()], "");
+
+                    Ok(())
+                },
+            }
+        };
+
         match routine {
             IntrinsicRoutine::Print => {
                 let top_type = type_stack.pop().expect("Type stack should not be empty");
@@ -830,12 +948,7 @@ impl<'ctx> CodeGen<'ctx> {
                 match top_type {
                     LLVMType::String(string_type) => {
                         let _ = self.builder.build_call(pop_i32, &[], "");
-                        let str_ptr_int = self.builder.build_call(pop_i64, &[], "str_ptr").try_as_basic_value().left();
-                        let Some(BasicValueEnum::IntValue(str_ptr_int)) = str_ptr_int else {
-                            return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", str_ptr_int), fn_name: POP_I64.to_owned() });
-                        };
-
-                        let str_ptr = self.builder.build_int_to_ptr(str_ptr_int, self.types.str_type, "str_ptr");
+                        let str_ptr = self.call_ptr_return(pop_str_ptr, &[], "str_ptr", POP_STR_PTR)?;
 
                         self.builder.build_call(print_str, &[str_ptr.into()], "");
 
@@ -1036,11 +1149,53 @@ impl<'ctx> CodeGen<'ctx> {
 
                 Ok(())
             },
-            IntrinsicRoutine::Swap => todo!(),
+            IntrinsicRoutine::Swap => {
+                let top_type = type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+                let second_type = type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+
+                let top_value = pop_value(top_type)?;
+                let second_value = pop_value(second_type)?;
+
+                push_value(top_value, top_type)?;
+                push_value(second_value, second_type)?;
+
+                type_stack.push(top_type);
+                type_stack.push(second_type);
+
+                Ok(())
+            },
             IntrinsicRoutine::Mod => todo!(),
             IntrinsicRoutine::Drop => todo!(),
-            IntrinsicRoutine::Clone => todo!(),
-            IntrinsicRoutine::CloneOver => todo!(),
+            IntrinsicRoutine::Clone => {
+                let top_type = type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+
+                let top_value = pop_value(top_type)?;
+                push_value(top_value.clone(), top_type)?;
+                push_value(top_value, top_type)?;
+
+                type_stack.push(top_type);
+                type_stack.push(top_type);
+
+                Ok(())
+
+            },
+            IntrinsicRoutine::CloneOver => {
+                let top_type = type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+                let second_type = type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+
+                let top_value = pop_value(top_type)?;
+                let second_value = pop_value(second_type)?;
+
+                push_value(second_value.clone(), second_type)?;
+                push_value(top_value, top_type)?;
+                push_value(second_value.clone(), second_type)?;
+
+                type_stack.push(second_type);
+                type_stack.push(top_type);
+                type_stack.push(second_type);
+
+                Ok(())
+            },
             IntrinsicRoutine::GreaterThan => todo!(),
             IntrinsicRoutine::StringConcat => {
                 let top_type = type_stack.pop();
