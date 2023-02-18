@@ -1,3 +1,4 @@
+use inkwell::basic_block::BasicBlock;
 use inkwell::targets::TargetTriple;
 use inkwell::{OptimizationLevel, IntPredicate};
 use inkwell::builder::Builder;
@@ -6,7 +7,7 @@ use inkwell::types::{IntType, VoidType, PointerType, ArrayType, BasicType};
 use inkwell::module::{Module, Linkage};
 use inkwell::AddressSpace;
 use inkwell::values::{AnyValue, AsValueRef, BasicValueEnum, BasicValue, PointerValue, ArrayValue, IntValue, AggregateValueEnum, FunctionValue, BasicMetadataValueEnum};
-use crate::{Type, Token};
+use crate::{Type, Token, Block};
 use crate::{PileProgram, Value, routines::{Routine, IntrinsicRoutine}};
 use std::collections::VecDeque;
 
@@ -21,6 +22,9 @@ pub(crate) enum CompilerError{
     InvalidIntByteLength(u32),
     MissingFirstParam(String),
     MissingReturnValue(String),
+    MissingOpenBlock,
+    MissingCloseBlock,
+    UnexpectedPreOpenBlockToken,
     InvalidParamType { expected: String, found: String, fn_name: String },
     InvalidInsertValueResult { expected: String, found: String },
     InvalidLoadType { expected: String, found: String },
@@ -110,21 +114,70 @@ impl PileProgram {
         code_gen.build_string_compare()?;
 
         let mut type_stack = Vec::new();
+        let entry_block = code_gen.start_top_level_statements();
+        let mut block_stack: Vec<(Option<BasicBlock>, Option<BasicBlock>, BasicBlock)> = Vec::new();
 
-        code_gen.start_top_level_statements();
-        for token in self.tokens.iter() {
+        let mut token_index = 0;
+        while let Some(token) = self.tokens.get(token_index) {
             match token {
                 Token::Constant(value) => code_gen.push_constant(value, &mut type_stack)?,
-                Token::If => todo!(),
-                Token::While => todo!(),
-                Token::Block(block) => todo!(),
+                Token::If | Token::While => {
+                    type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+                },
+                Token::Block(Block::Open { close_position: _ }) => {
+                    let (_, maybe_open, close) = block_stack.last()
+                        .cloned()
+                        .unwrap_or((None, None, entry_block));
+
+                    let block_to_append = if let Some(open) = maybe_open {
+                        open
+                    } else {
+                        block_stack.pop();
+                        close
+                    };
+
+                    let previous_token = &self.tokens[token_index - 1];
+                    let (loop_start, open, close) = match previous_token {
+                        Token::While => {
+                            code_gen.handle_while_open_block(
+                                block_to_append)
+                                .map(|(start, open, close)| (Some(start), open, close))
+                        },
+                        Token::If => {
+                            code_gen.handle_if_open_block(
+                                block_to_append).map(|(open, close)| (None, open, close))
+                        },
+                        _ => Err(CompilerError::UnexpectedPreOpenBlockToken),
+                    }?;
+                    block_stack.push((loop_start, Some(open), close));
+                },
+                Token::Block(Block::Close { open_position }) => {
+                    let (maybe_loop_start, maybe_open, close) = block_stack.pop()
+                        .expect("We need blocks in the stack to close a block");
+                    let (maybe_loop_start, open, close) = if let Some(open) = maybe_open {
+                        (maybe_loop_start, open, close)
+                    } else {
+                        // this open block has already been closed, go to next block stack entry
+                        let (maybe_loop_start, maybe_open, close) = block_stack.pop()
+                            .expect("We need blocks in the stack to close a block");
+                        (maybe_loop_start, maybe_open.expect("Need an open block to close it"), close)
+                    };
+
+                    block_stack.push((maybe_loop_start, None, close));
+
+                    code_gen.handle_close_block(*open_position, &self.tokens, maybe_loop_start, open, close)?;
+                    if let Token::While = &self.tokens[open_position - 1] {
+                        type_stack.pop();
+                    }
+                },
                 Token::RoutineCall(routine_name) =>{
                     let Some(routine) = self.routines.get(routine_name) else {
                         return Err(CompilerError::MissingRoutine(routine_name.to_owned()));
                     };
-                    code_gen.call_routine(routine, &mut type_stack)?
+                    code_gen.call_routine(routine, &mut type_stack)?;
                 },
             }
+            token_index += 1;
         }
         code_gen.end_top_level_statements();
 
@@ -139,7 +192,6 @@ struct CodeGen<'ctx> {
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     types: LLVMValueTypes<'ctx>,
-    global_strings: Vec<String>,
 }
 
 const STACK_NAME: &str = "pile_stack";
@@ -223,8 +275,62 @@ impl<'ctx> CodeGen<'ctx> {
             module,
             builder,
             types,
-            global_strings: Vec::new(),
         }
+    }
+
+    fn handle_while_open_block<'a>(&'a self, previous_block: BasicBlock<'a>) -> Result<(BasicBlock<'a>, BasicBlock<'a>, BasicBlock<'a>), CompilerError> {
+        let loop_start = self.context.insert_basic_block_after(previous_block, "loop_start");
+        self.builder.build_unconditional_branch(loop_start);
+        self.builder.position_at_end(loop_start);
+
+        let open_block = self.context.insert_basic_block_after(loop_start, "loop_open");
+
+        let close_block = self.context.insert_basic_block_after(open_block, "loop_close");
+        let pop_bool = self.get_function(POP_BOOL)?;
+
+        let bool_value = self.call_int_return(pop_bool, &[], "while_check", POP_BOOL)?;
+        self.builder.build_conditional_branch(bool_value, open_block, close_block);
+
+        self.builder.position_at_end(open_block);
+
+        Ok((loop_start, open_block, close_block))
+    }
+
+    fn handle_if_open_block<'a>(&'a self, previous_block: BasicBlock<'a>) -> Result<(BasicBlock<'a>, BasicBlock<'a>), CompilerError> {
+        let open_block = self.context.insert_basic_block_after(previous_block, "if_open");
+
+        let close_block = self.context.insert_basic_block_after(open_block, "if_close");
+        let pop_bool = self.get_function(POP_BOOL)?;
+
+        let bool_value = self.call_int_return(pop_bool, &[], "if_check", "POP_BOOL")?;
+        self.builder.build_conditional_branch(bool_value, open_block, close_block);
+
+        self.builder.position_at_end(open_block);
+
+        Ok((open_block, close_block))
+    }
+
+    fn handle_close_block(&self,
+                    open_position: usize,
+                    tokens: &[Token],
+                    loop_start: Option<BasicBlock>,
+                    previous_open_block: BasicBlock,
+                    previous_close_block: BasicBlock) -> Result<(), CompilerError> {
+        match &tokens[open_position - 1] {
+            Token::While => {
+                self.builder.build_unconditional_branch(
+                    loop_start.expect(""));
+            },
+            Token::If => {
+                self.builder.build_unconditional_branch(previous_close_block);
+            },
+            _ => return Err(CompilerError::UnexpectedPreOpenBlockToken),
+        }
+        
+
+        self.builder.position_at_end(previous_close_block);
+
+        Ok(())
     }
 
     fn get_function(&self, name: &str) -> Result<FunctionValue, CompilerError> {
@@ -498,7 +604,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.builder.position_at_end(is_false_block);
 
-        let return_value = self.builder.build_call(printf, &[false_global_value.as_pointer_value().into()], "");
+        let return_value = self.builder.build_call(printf, &[false_global_value.as_pointer_value().into()], "print_result");
         let Some(return_value) = return_value.try_as_basic_value().left() else {
             return Err(CompilerError::MissingReturnValue(PRINTF.to_owned()));
         };
@@ -507,7 +613,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.builder.position_at_end(is_true_block);
 
-        let return_value = self.builder.build_call(printf, &[true_global_value.as_pointer_value().into()], "");
+        let return_value = self.builder.build_call(printf, &[true_global_value.as_pointer_value().into()], "print_result");
         let Some(return_value) = return_value.try_as_basic_value().left() else {
             return Err(CompilerError::MissingReturnValue(PRINTF.to_owned()));
         };
@@ -755,11 +861,10 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    fn push_constant(&mut self, value: &Value, type_stack: &mut Vec<LLVMType>) -> Result<(), CompilerError> {
+    fn push_constant(&self, value: &Value, type_stack: &mut Vec<LLVMType>) -> Result<(), CompilerError> {
         match value {
             Value::String(str_value) => {
                 type_stack.push(LLVMType::String(LLVMString::Constant));
-                let global_name = format!("string_{}", self.global_strings.len());
 
                 let utf16_encoded = str_value.encode_utf16();
 
@@ -774,7 +879,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let const_array = &self.types.i16_type.const_array(int_values.into_boxed_slice().as_ref());
 
-                let global_value = self.module.add_global(const_array.get_type(), Some(AddressSpace::from(0u16)), &global_name);
+                let global_value = self.module.add_global(const_array.get_type(), Some(AddressSpace::from(0u16)), "string");
                 global_value.set_linkage(Linkage::Internal);
                 global_value.set_initializer(const_array);
 
@@ -783,7 +888,6 @@ impl<'ctx> CodeGen<'ctx> {
                     self.context.i8_type().ptr_type(AddressSpace::from(0u16)),
                     "str_ptr",
                 );
-                self.global_strings.push(global_name);
 
                 let ptr_int = self.builder.build_ptr_to_int(str_ptr, self.types.i64_type, "ptr_as_int");
 
@@ -947,10 +1051,10 @@ impl<'ctx> CodeGen<'ctx> {
 
                 match top_type {
                     LLVMType::String(string_type) => {
-                        let _ = self.builder.build_call(pop_i32, &[], "");
+                        let _ = self.builder.build_call(pop_i32, &[], "discard");
                         let str_ptr = self.call_ptr_return(pop_str_ptr, &[], "str_ptr", POP_STR_PTR)?;
 
-                        self.builder.build_call(print_str, &[str_ptr.into()], "");
+                        self.builder.build_call(print_str, &[str_ptr.into()], "print_result");
 
                         if let LLVMString::Stack = string_type {
                             // todo: figure out if we can free memory (might have been cloned);
@@ -964,7 +1068,7 @@ impl<'ctx> CodeGen<'ctx> {
                             return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", int_value), fn_name: POP_I32.to_owned() });
                         };
 
-                        self.builder.build_call(print_i32, &[int_value.into()], "");
+                        self.builder.build_call(print_i32, &[int_value.into()], "print_result");
                     }
                     LLVMType::Bool => {
                         let byte_value = self.builder.build_call(pop_byte, &[], "byte_value").try_as_basic_value().left();
@@ -972,7 +1076,7 @@ impl<'ctx> CodeGen<'ctx> {
                             return Err(CompilerError::InvalidReturnValue { expected: "int".to_owned(), found: format!("{:?}", byte_value), fn_name: POP_BYTE.to_owned() });
                         };
 
-                        self.builder.build_call(print_bool, &[byte_value.into()], "");
+                        self.builder.build_call(print_bool, &[byte_value.into()], "print_result");
                     },
                     LLVMType::Char => {
                         let last_16 = self.builder.build_call(pop_i16, &[], "last_16").try_as_basic_value().left();
@@ -992,7 +1096,7 @@ impl<'ctx> CodeGen<'ctx> {
                             return Err(CompilerError::InvalidInsertValueResult { expected: "array".to_owned(), found: format!("{:?}", array_value).to_owned() });
                         };
 
-                        self.builder.build_call(print_char, &[array_value.into()], "");
+                        self.builder.build_call(print_char, &[array_value.into()], "print_result");
                     }
                 }
 
@@ -1003,7 +1107,7 @@ impl<'ctx> CodeGen<'ctx> {
                     return Err(CompilerError::MissingRoutine(PRINTF.to_owned()));
                 };
                 let new_line = self.module.get_global("new_line").unwrap();
-                self.builder.build_call(puts, &[new_line.as_pointer_value().into()], "");
+                self.builder.build_call(puts, &[new_line.as_pointer_value().into()], "print_result");
                 Ok(())
             },
             IntrinsicRoutine::AddI32 => {
@@ -1164,8 +1268,31 @@ impl<'ctx> CodeGen<'ctx> {
 
                 Ok(())
             },
-            IntrinsicRoutine::Mod => todo!(),
-            IntrinsicRoutine::Drop => todo!(),
+            IntrinsicRoutine::Mod => {
+                let top_type = type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+                let second_type = type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+
+                if !matches!((top_type, second_type), (LLVMType::I32, LLVMType::I32)) {
+                    return Err(CompilerError::InvalidTypeStackTypes { expected: Box::new([LLVMType::I32, LLVMType::I32]), found: Box::new([Some(top_type), Some(second_type)]) });
+                }
+
+                let top_int = self.call_int_return(pop_i32, &[], "top_int", POP_I32)?;
+                let second_int = self.call_int_return(pop_i32, &[], "second_int", POP_I32)?;
+
+                let remainer = self.builder.build_int_signed_rem(top_int, second_int, "remainder");
+
+                self.builder.build_call(push_i32, &[remainer.into()], "");
+                type_stack.push(LLVMType::I32);
+
+                Ok(())
+            },
+            IntrinsicRoutine::Drop => {
+                let top_type = type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+
+                _ = pop_value(top_type)?;
+
+                Ok(())
+            },
             IntrinsicRoutine::Clone => {
                 let top_type = type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
 
@@ -1196,12 +1323,29 @@ impl<'ctx> CodeGen<'ctx> {
 
                 Ok(())
             },
-            IntrinsicRoutine::GreaterThan => todo!(),
+            IntrinsicRoutine::GreaterThan => {
+                let top_type = type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+                let second_type = type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+
+                if !matches!((top_type, second_type), (LLVMType::I32, LLVMType::I32)) {
+                    return Err(CompilerError::InvalidTypeStackTypes { expected: Box::new([LLVMType::I32, LLVMType::I32]), found: Box::new([Some(top_type), Some(second_type)]) });
+                }
+
+                let top_int = self.call_int_return(pop_i32, &[], "top_int", POP_I32)?;
+                let second_int = self.call_int_return(pop_i32, &[], "second_int", POP_I32)?;
+
+                let greater_than = self.builder.build_int_compare(IntPredicate::SGT, top_int, second_int, "greater_than");
+                self.builder.build_call(push_bool, &[greater_than.into()], "");
+
+                type_stack.push(LLVMType::Bool);
+
+                Ok(())
+            },
             IntrinsicRoutine::StringConcat => {
                 let top_type = type_stack.pop();
                 let second_type = type_stack.pop();
 
-                let (top_str_type, second_str_type) = match (top_type, second_type) {
+                match (top_type, second_type) {
                     (Some(LLVMType::String(top_str_type)), Some(LLVMType::String(second_str_type))) => Ok((top_str_type, second_str_type)),
                     (Some(_), Some(_)) => Err(CompilerError::InvalidTypeStackTypes {
                         expected: Box::new([LLVMType::String(LLVMString::Constant), LLVMType::String(LLVMString::Constant)]),
@@ -1219,11 +1363,12 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    fn start_top_level_statements(&self) {
+    fn start_top_level_statements(&self) -> BasicBlock {
         let main_fn_type = self.types.void_type.fn_type(&[], false);
         let main_fn = self.module.add_function("main", main_fn_type, None);
         let basic_block = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(basic_block);
+        basic_block
     }
 
     fn end_top_level_statements(&self)  {

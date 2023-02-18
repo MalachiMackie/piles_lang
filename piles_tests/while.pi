@@ -1,5 +1,33 @@
-10 !clone 0 !eq !not while {
+"Hello while" !print !println
+
+10
+
+true if {
+
+!clone 0 !eq !not while {
+
+	10 10 !eq if {
+		"true" !print !println
+	}
+
+	10 5 !eq if {
+		"false" !print !println
+	}
+
+	true while {
+		true while {
+			"inner inner while" !print !println
+			false
+		}
+		"inner while" !print !println
+		false
+	}
+
 	!clone !print !println
 	1 !swap	!minus
 	!clone 0 !eq !not
 }
+
+}
+
+"Good bye while" !print !println

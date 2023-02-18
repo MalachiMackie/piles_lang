@@ -80,8 +80,13 @@ impl PileProgram {
                         // while loop expects a bool at the top
                         open_stack_state.push(Type::Bool);
                     }
+                    
                     if type_stack != open_stack_state {
                         return Err(TypeCheckError::NonEmptyStackAfterBlock);
+                    }
+
+                    if let Token::While = &tokens[open_position - 1] {
+                        type_stack.pop();
                     }
                 }
                 Token::If => {
@@ -491,6 +496,27 @@ mod tests {
 
         let result = program.type_check();
         assert!(matches!(result, Err(TypeCheckError::RoutineIncorrectOutputType)));
+    }
+
+    #[test]
+    fn while_close_block_drops_bool() {
+        let program = PileProgram::new(&[
+            Token::Constant(Value::I32(10)),
+            Token::Constant(Value::Bool(true)),
+            Token::While,
+            Token::Block(Block::Open { close_position: 8 }),
+            Token::Constant(Value::String("while".to_owned())),
+            Token::RoutineCall("print".to_owned()),
+            Token::RoutineCall("println".to_owned()),
+            Token::Constant(Value::Bool(false)),
+            Token::Block(Block::Close { open_position: 3 }),
+            Token::Constant(Value::I32(10)),
+            Token::RoutineCall("minus".to_owned()),
+        ], HashMap::new());
+
+        let result = program.type_check();
+        println!("{:?}", result);
+        assert!(result.is_ok());
     }
 
     #[test]
