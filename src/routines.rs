@@ -1,4 +1,4 @@
-use crate::{Stack, Token, Type, Value, Block};
+use crate::{Stack, Token, Type, Value};
 use std::collections::HashMap;
 
 #[derive(PartialEq, Debug, Clone)]
@@ -47,14 +47,10 @@ impl RoutineSigniture {
         Self {
             name: name.to_owned(),
             inputs: inputs
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
+                .to_vec()
                 .into_boxed_slice(),
             outputs: outputs
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
+                .to_vec()
                 .into_boxed_slice(),
         }
     }
@@ -311,7 +307,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn run_routine_should_panic_when_stack_doesnt_have_enough_items() {
-        let mut stack = Stack::from_values(&vec![Value::I32(10)]);
+        let mut stack = Stack::from_values(&[Value::I32(10)]);
         let routine = IntrinsicRoutine::AddI32;
         routine.run(&mut stack);
     }
@@ -353,7 +349,7 @@ mod tests {
     #[test]
     fn test_print_char() {
         // todo: test std::out
-        let mut stack = Stack::from_values(&vec![Value::Char('a')]);
+        let mut stack = Stack::from_values(&[Value::Char('a')]);
         let routine = IntrinsicRoutine::Print;
         routine.run(&mut stack);
         let expected_stack = Stack::new();
@@ -362,7 +358,7 @@ mod tests {
 
     #[test]
     fn test_print_string() {
-        let mut stack = Stack::from_values(&vec![Value::String("Hello World!".to_owned())]);
+        let mut stack = Stack::from_values(&[Value::String("Hello World!".to_owned())]);
         let routine = IntrinsicRoutine::Print;
         routine.run(&mut stack);
         let expected_stack = Stack::new();

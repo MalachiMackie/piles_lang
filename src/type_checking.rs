@@ -1,5 +1,5 @@
 use crate::{routines::RoutineSigniture, Block, PileProgram, Routine, Token, Type, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub(crate) enum TypeCheckError {
@@ -20,14 +20,14 @@ pub(crate) enum TypeCheckError {
 impl PileProgram {
     pub(crate) fn type_check(&self) -> Result<(), TypeCheckError> {
         self.type_check_with_stack(&[])?;
-        for (routine_name, routine) in self.routines.iter() {
+        for (_, routine) in self.routines.iter() {
             if let Routine::Pile { signiture, routine: tokens } = routine {
                 let mini_program = PileProgram::new(tokens, self.routines.clone());
                 let output_stack = mini_program.type_check_with_stack(signiture.inputs())?;
 
-                let mut expected_outputs = signiture.outputs().iter();
+                let expected_outputs = signiture.outputs().iter();
                 let mut actual_outputs = output_stack.iter();
-                while let Some(expected_output_type) = expected_outputs.next() {
+                for expected_output_type in expected_outputs {
                     let Some(actual_output_type) = actual_outputs.next() else {
                         return Err(TypeCheckError::RoutineMissingOutput);
                     };
@@ -66,7 +66,7 @@ impl PileProgram {
                 Token::Constant(Value::Bool(_)) => {
                     type_stack.push(Type::Bool);
                 }
-                Token::Block(Block::Open { close_position }) => {
+                Token::Block(Block::Open { close_position: _ }) => {
                     block_stack.push((index, type_stack.clone()));
                 }
                 Token::Block(Block::Close { open_position }) => {
@@ -165,7 +165,7 @@ fn type_check_routine(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routines::{IntrinsicRoutine, RoutineSigniture};
+    use crate::routines::RoutineSigniture;
 
     #[test]
     fn empty_program_should_succeed() {
@@ -447,7 +447,7 @@ mod tests {
         ], [(
             "my_routine".to_owned(),
             Routine::Pile {
-                signiture: RoutineSigniture::new("my_routine", &vec![Type::String], &vec![Type::I32]),
+                signiture: RoutineSigniture::new("my_routine", &[Type::String], &[Type::I32]),
                 routine: vec![
                     Token::RoutineCall("print".to_owned()),
                     Token::Constant(Value::I32(10)),
@@ -467,7 +467,7 @@ mod tests {
         ], [(
             "my_routine".to_owned(),
             Routine::Pile {
-                signiture: RoutineSigniture::new("my_routine", &vec![Type::String], &vec![Type::I32]),
+                signiture: RoutineSigniture::new("my_routine", &[Type::String], &[Type::I32]),
                 routine: vec![
                     Token::RoutineCall("print".to_owned()),
                 ].into_boxed_slice()
@@ -486,7 +486,7 @@ mod tests {
         ], [(
             "my_routine".to_owned(),
             Routine::Pile {
-                signiture: RoutineSigniture::new("my_routine", &vec![Type::String], &vec![Type::I32]),
+                signiture: RoutineSigniture::new("my_routine", &[Type::String], &[Type::I32]),
                 routine: vec![
                     Token::RoutineCall("print".to_owned()),
                     Token::Constant(Value::String("Hello World".to_owned())),
@@ -527,7 +527,7 @@ mod tests {
         ], [(
             "my_routine".to_owned(),
             Routine::Pile {
-                signiture: RoutineSigniture::new("my_routine", &vec![Type::String], &vec![Type::I32]),
+                signiture: RoutineSigniture::new("my_routine", &[Type::String], &[Type::I32]),
                 routine: vec![
                     Token::RoutineCall("print".to_owned()),
                     Token::Constant(Value::I32(10)),

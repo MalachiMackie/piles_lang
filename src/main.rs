@@ -3,12 +3,12 @@ mod routines;
 mod type_checking;
 mod compile;
 
-use routines::{Routine, IntrinsicRoutine, RoutineSigniture};
+use routines::{Routine, IntrinsicRoutine};
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fmt::{Display, Formatter};
 use std::io::prelude::*;
-use clap::{Arg, ArgAction, Command, Parser, crate_name};
+use clap::{Arg, Command, crate_name};
 
 const INTERPRET_COMMAND: &str = "interpret";
 const COMPILE_COMMAND: &str = "compile";
@@ -45,12 +45,12 @@ fn main() {
         Some((COMPILE_COMMAND, sub_m)) => Some((Operation::Compile, sub_m.get_one::<String>(FILE_ARG).unwrap())),
         _ => None,
     }) else {
-        command.print_help();
+        command.print_help().unwrap();
         return;
     };
 
     let mut contents = String::new();
-    let mut file = std::fs::File::open(&file_name).unwrap();
+    let mut file = std::fs::File::open(file_name).unwrap();
     file.read_to_string(&mut contents).unwrap();
 
     let program = match PileProgram::parse(&contents) {
@@ -84,7 +84,7 @@ impl Display for PileProgram {
                 continue;
             };
             formatter.write_str(format!("!!{} | ", routine_name).as_str())?;
-            if signiture.inputs().len() == 0 {
+            if signiture.inputs().is_empty() {
                 formatter.write_str("None ")?;
             } else {
                 for input in signiture.inputs().iter() {
@@ -101,7 +101,7 @@ impl Display for PileProgram {
 
             formatter.write_str("-> ")?;
 
-            if signiture.outputs().len() == 0 {
+            if signiture.outputs().is_empty() {
                 formatter.write_str("None ")?;
             } else {
                 for input in signiture.outputs().iter() {
@@ -140,7 +140,7 @@ impl PileProgram {
         }
     }
 
-    fn run_tokens(&self, tokens: &[Token], mut stack: &mut Stack) {
+    fn run_tokens(&self, tokens: &[Token], stack: &mut Stack) {
         let mut index = 0;
         while index < tokens.len() {
             let token = &tokens[index];
@@ -151,11 +151,11 @@ impl PileProgram {
                 Token::RoutineCall(routine_name) => {
                     let routine = self.routines.get(routine_name).expect("type checking failed if routine is missing");
                     match routine {
-                        Routine::Intrinsic { signiture, routine } => routine.run(&mut stack),
-                        Routine::Pile { signiture, routine } => self.run_tokens(routine, &mut stack)
+                        Routine::Intrinsic { signiture: _, routine } => routine.run(stack),
+                        Routine::Pile { signiture: _, routine } => self.run_tokens(routine, stack)
                     }
                 },
-                Token::Block(Block::Open { close_position }) => {}
+                Token::Block(Block::Open { close_position: _ }) => {}
                 Token::Block(Block::Close { open_position }) => {
                     if let Token::While = &tokens[open_position - 1] {
                         index = open_position - 2;
@@ -235,12 +235,12 @@ enum Value {
 }
 
 impl Display for Value {
-    fn fmt(&self, mut formatter: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
-            Value::I32(value) => value.fmt(&mut formatter),
-            Value::Char(value) => value.fmt(&mut formatter),
-            Value::String(value) => value.fmt(&mut formatter),
-            Value::Bool(value) => value.fmt(&mut formatter),
+            Value::I32(value) => value.fmt(formatter),
+            Value::Char(value) => value.fmt(formatter),
+            Value::String(value) => value.fmt(formatter),
+            Value::Bool(value) => value.fmt(formatter),
         }
     }
 }
@@ -259,10 +259,6 @@ impl Stack {
         Self(VecDeque::new())
     }
 
-    fn from_values(values: &[Value]) -> Self {
-        Self(values.iter().cloned().collect())
-    }
-
     fn push(&mut self, value: Value) {
         self.0.push_back(value);
     }
@@ -271,21 +267,9 @@ impl Stack {
         self.0.pop_back()
     }
 
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
     fn pop_i32(&mut self) -> Result<i32, PopError> {
         match self.pop() {
             Some(Value::I32(value)) => Ok(value),
-            Some(_) => Err(PopError::InvalidType),
-            None => Err(PopError::StackEmpty),
-        }
-    }
-
-    fn pop_char(&mut self) -> Result<char, PopError> {
-        match self.pop() {
-            Some(Value::Char(value)) => Ok(value),
             Some(_) => Err(PopError::InvalidType),
             None => Err(PopError::StackEmpty),
         }
@@ -304,6 +288,17 @@ impl Stack {
             Some(Value::Bool(value)) => Ok(value),
             Some(_) => Err(PopError::InvalidType),
             None => Err(PopError::StackEmpty),
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    impl Stack {
+        pub(super) fn from_values(values: &[Value]) -> Self {
+            Self(values.iter().cloned().collect())
         }
     }
 }

@@ -7,7 +7,6 @@ use std::collections::HashMap;
 
 struct Parser<I: Iterator<Item = char>> {
     chars: I,
-    next_token: usize,
     block_stack: Vec<usize>,
 }
 
@@ -40,7 +39,6 @@ pub(crate) enum ParseError {
     StringMissingClosingQuote,
     BoolInvalid,
     ParseIntError,
-    InvalidRoutine,
     MissingOpenBlock,
     AlreadyDefiningRoutine,
     UnexpectedRoutineDefinitionSeparator,
@@ -87,19 +85,17 @@ impl<'a> Parser<Chars<'a>> {
         let chars = input.chars();
         Self {
             chars,
-            next_token: 0,
             block_stack: Vec::new(),
         }
     }
 
     fn parse(&mut self) -> Result<PileProgram, ParseError> {
         let mut intermediate_tokens = Vec::new();
-        let mut routines = IntrinsicRoutine::get_routine_dictionary();
         while let Some(result) = self.next(intermediate_tokens.len()) {
             intermediate_tokens.push(result?);
         }
         
-        let mut program = Self::convert_intermediate_tokens(&intermediate_tokens)?;
+        let program = Self::convert_intermediate_tokens(&intermediate_tokens)?;
         
         Ok(program)
     }
@@ -107,11 +103,9 @@ impl<'a> Parser<Chars<'a>> {
     fn clean_block_positions(tokens: &mut [Token]) -> Result<(), ParseError> {
         let mut open_positions = Vec::new();
         let mut index = 0;
-        let count = tokens.iter().count();
-        while index < count {
-            let token = &mut tokens[index];
+        while let Some(token) = tokens.get_mut(index){
             match token {
-                Token::Block(Block::Open { close_position }) => {
+                Token::Block(Block::Open { close_position: _ }) => {
                     open_positions.push(index);
                 },
                 Token::Block(Block::Close { open_position }) => {
@@ -191,14 +185,12 @@ impl<'a> Parser<Chars<'a>> {
                         current_routine_signiture = Some(RoutineSigniture::new(routine_name, &input_types, &output_types));
                         current_routine_definition_tokens = None;
                         current_routine_body_tokens = Some(Vec::new());
-                    } else {
-                        if let Some(body_tokens) = &mut current_routine_body_tokens {
+                    } else if let Some(body_tokens) = &mut current_routine_body_tokens {
                             routine_nest_level += 1;
                             body_tokens.push(Token::Block(Block::Open { close_position }));
                         } else {
-                            tokens.push(Token::Block(Block::Open { close_position: close_position }))
+                            tokens.push(Token::Block(Block::Open { close_position }))
                         }
-                    }
                 },
                 IntermediateToken::Block(Block::Close { open_position }) => {
                     if routine_nest_level == 0 {
@@ -219,7 +211,7 @@ impl<'a> Parser<Chars<'a>> {
                 IntermediateToken::RoutineCall(routine_name) => {
                     push_token(Token::RoutineCall(routine_name.to_owned()), &mut current_routine_body_tokens, &mut tokens);
                 },
-                IntermediateToken::RoutineDefinitionName(routine_name) => {
+                IntermediateToken::RoutineDefinitionName(_) => {
                     if current_routine_definition_tokens.is_some() {
                         return Err(ParseError::AlreadyDefiningRoutine);
                     }
@@ -254,7 +246,7 @@ impl<'a> Parser<Chars<'a>> {
 
         let mut tokens = tokens.into_boxed_slice();
 
-        Self::clean_block_positions(&mut *tokens)?;
+        Self::clean_block_positions(&mut tokens)?;
 
         Ok(PileProgram { routines, tokens })
     }
@@ -264,7 +256,7 @@ impl<'a> Parser<Chars<'a>> {
         // todo: add all values at compile time
         let mut token_type = None;
         let mut delimeter: &dyn Fn(char) -> bool = &char::is_whitespace;
-        while let Some(next_char) = self.chars.next() {
+        for next_char in self.chars.by_ref() {
             if current_part.is_empty() && next_char.is_whitespace() {
                 continue;
             }
@@ -306,7 +298,7 @@ impl<'a> Parser<Chars<'a>> {
                     .trim()
                     .parse()
                     .map(|i32_value| IntermediateToken::Constant(Value::I32(i32_value)))
-                    .map_err(|e| ParseError::ParseIntError),
+                    .map_err(|_e| ParseError::ParseIntError),
             ),
             TokenType::ConstantBool => Some(parse_bool(string_value.trim())),
             TokenType::OpenBlock => {
@@ -339,10 +331,10 @@ fn evaluate_possible_tokens(value: &str) -> Box<[TokenType]> {
         }
     }
     add_type_if(&mut possibilities, TokenType::Comment, value.len() == 1 && value == "/" || value.len() > 1 && value.starts_with("//"));
-    add_type_if(&mut possibilities, TokenType::ConstantChar, value.starts_with("'"));
-    add_type_if(&mut possibilities, TokenType::ConstantString, value.starts_with("\""));
-    add_type_if(&mut possibilities, TokenType::RoutineCall, value.starts_with("!") && value.chars().skip(1).next().filter(|c| !c.is_alphabetic()).is_none());
-    add_type_if(&mut possibilities, TokenType::RoutineDefinitionName, value.starts_with("!") && value.len() <= 1 || value.starts_with("!!"));
+    add_type_if(&mut possibilities, TokenType::ConstantChar, value.starts_with('\''));
+    add_type_if(&mut possibilities, TokenType::ConstantString, value.starts_with('"'));
+    add_type_if(&mut possibilities, TokenType::RoutineCall, value.starts_with('!') && value.chars().nth(1).filter(|c| !c.is_alphabetic()).is_none());
+    add_type_if(&mut possibilities, TokenType::RoutineDefinitionName, value.starts_with('!') && value.len() <= 1 || value.starts_with("!!"));
     add_type_if(&mut possibilities, TokenType::RoutineSignitureSeparator, "->".starts_with(value));
     add_type_if(&mut possibilities, TokenType::RoutineDefinitionSeparator, value == "|");
     if value
@@ -430,7 +422,7 @@ fn parse_string(value: &str) -> Result<IntermediateToken, ParseError> {
     } else if !value.ends_with('"') || value.len() == 1 {
         return Err(ParseError::StringMissingClosingQuote);
     }
-    let mut chars = value.chars().skip(1);
+    let chars = value.chars().skip(1);
     let rest: Vec<_> = chars.collect();
     let Some(last_char) = rest.last() else {
         return Err(ParseError::StringNoStringContent);
@@ -481,7 +473,7 @@ mod tests {
             test_input(
                 "constant i32 pushing",
                 "10 5",
-                &vec![
+                &[
                     Token::Constant(Value::I32(10)),
                     Token::Constant(Value::I32(5)),
                 ],
@@ -489,19 +481,19 @@ mod tests {
             test_input(
                 "routine",
                 "!add",
-                &vec![Token::RoutineCall(
+                &[Token::RoutineCall(
                     "add".to_owned(),
                 )],
             ),
             test_input(
                 "negative number",
                 "-124",
-                &vec![Token::Constant(Value::I32(-124))],
+                &[Token::Constant(Value::I32(-124))],
             ),
             test_input(
                 "constants and routine",
                 "10 5 !minus 15",
-                &vec![
+                &[
                     Token::Constant(Value::I32(10)),
                     Token::Constant(Value::I32(5)),
                     Token::RoutineCall("minus".to_owned()),
@@ -511,7 +503,7 @@ mod tests {
             test_input(
                 "char",
                 "'a' '$'",
-                &vec![
+                &[
                     Token::Constant(Value::Char('a')),
                     Token::Constant(Value::Char('$')),
                 ],
@@ -519,7 +511,7 @@ mod tests {
             test_input(
                 "bool",
                 "true false",
-                &vec![
+                &[
                     Token::Constant(Value::Bool(true)),
                     Token::Constant(Value::Bool(false)),
                 ],
@@ -527,17 +519,17 @@ mod tests {
             test_input(
                 "empty string",
                 r#""""#,
-                &vec![Token::Constant(Value::String(String::new()))],
+                &[Token::Constant(Value::String(String::new()))],
             ),
             test_input(
                 "string with space",
                 r#""some string""#,
-                &vec![Token::Constant(Value::String("some string".to_owned()))],
+                &[Token::Constant(Value::String("some string".to_owned()))],
             ),
             test_input(
                 "string then routine",
                 r#""Hello World!" !print"#,
-                &vec![
+                &[
                     Token::Constant(Value::String("Hello World!".to_owned())),
                     Token::RoutineCall("print".to_owned()),
                 ],
@@ -545,7 +537,7 @@ mod tests {
             test_input(
                 "block",
                 "{ }",
-                &vec![
+                &[
                     Token::Block(Block::Open { close_position: 1 }),
                     Token::Block(Block::Close { open_position: 0 }),
                 ],
@@ -553,7 +545,7 @@ mod tests {
             test_input(
                 "nested block",
                 "{ { } }",
-                &vec![
+                &[
                     Token::Block(Block::Open { close_position: 3 }),
                     Token::Block(Block::Open { close_position: 2 }),
                     Token::Block(Block::Close { open_position: 1 }),
@@ -565,7 +557,7 @@ mod tests {
                 r"true if {
                             'a' !print
                         }",
-                &vec![
+                &[
                     Token::Constant(Value::Bool(true)),
                     Token::If,
                     Token::Block(Block::Open { close_position: 5 }),
@@ -591,14 +583,14 @@ mod tests {
         let parsed = PileProgram::parse(input);
         match parsed {
             Ok(tokens) => Err(format!(
-                "Input: \"{}\". Expected parse failure {:?}, but found successful: {:?}",
-                input, expected_error, tokens
+                "description: {}.\nInput: \"{}\".\nExpected parse failure {:?}, but found successful: {:?}",
+                description, input, expected_error, tokens
             )),
             Err(err) if err != expected_error => Err(format!(
-                "Input: \"{}\". Expected parse failure {:?}, but found parse failure {:?}",
-                input, expected_error, err
+                "description: {}.\nInput: \"{}\".\nExpected parse failure {:?}, but found parse failure {:?}",
+                description, input, expected_error, err
             )),
-            Err(err) => Ok(()),
+            Err(_) => Ok(()),
         }
     }
 
@@ -633,10 +625,10 @@ mod tests {
                 ParseError::StringMissingClosingQuote,
             ),
             // todo: fix this test case
-            //            test_invalid_input(
-            //                "string extra characters",
-            //                r#""something"abc"#,
-            //                ParseError::StringMissingClosingQuote),
+                       // test_invalid_input(
+                           // "string extra characters",
+                           // r#""something"abc"#,
+                           // ParseError::StringMissingClosingQuote),
             test_invalid_input(
                 "string single quote only",
                 r#"""#,
@@ -669,7 +661,7 @@ mod tests {
             Token::RoutineCall("my_routine".to_owned()),
             Token::RoutineCall("print".to_owned()),
         ], [("my_routine".to_owned(), Routine::Pile {
-            signiture: RoutineSigniture::new("my_routine", &vec![Type::I32], &vec![Type::String]),
+            signiture: RoutineSigniture::new("my_routine", &[Type::I32], &vec![Type::String]),
             routine: vec![
                 Token::RoutineCall("print".to_owned()),
                 Token::Constant(Value::String("Hello World".to_owned())),

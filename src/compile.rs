@@ -1,15 +1,14 @@
 use inkwell::basic_block::BasicBlock;
 use inkwell::targets::TargetTriple;
-use inkwell::{OptimizationLevel, IntPredicate};
+use inkwell::IntPredicate;
 use inkwell::builder::Builder;
-use inkwell::context::{Context};
-use inkwell::types::{IntType, VoidType, PointerType, ArrayType, BasicType};
+use inkwell::context::Context;
+use inkwell::types::{IntType, VoidType, PointerType, BasicType};
 use inkwell::module::{Module, Linkage};
 use inkwell::AddressSpace;
-use inkwell::values::{AnyValue, AsValueRef, BasicValueEnum, BasicValue, PointerValue, ArrayValue, IntValue, AggregateValueEnum, FunctionValue, BasicMetadataValueEnum};
-use crate::{Type, Token, Block};
+use inkwell::values::{BasicValueEnum, PointerValue, IntValue, AggregateValueEnum, FunctionValue, BasicMetadataValueEnum};
+use crate::{Token, Block};
 use crate::{PileProgram, Value, routines::{Routine, IntrinsicRoutine}};
-use std::collections::VecDeque;
 
 
 #[allow(unused)]
@@ -89,7 +88,7 @@ impl PileProgram {
         };
         
         let context = Context::create();
-        let mut code_gen = CodeGen::new(file_part, &context);
+        let code_gen = CodeGen::new(file_part, &context);
 
         code_gen.build_push_int(2, PUSH_I16)?;
         code_gen.build_push_int(4, PUSH_I32)?;
@@ -154,18 +153,18 @@ impl PileProgram {
                 Token::Block(Block::Close { open_position }) => {
                     let (maybe_loop_start, maybe_open, close) = block_stack.pop()
                         .expect("We need blocks in the stack to close a block");
-                    let (maybe_loop_start, open, close) = if let Some(open) = maybe_open {
-                        (maybe_loop_start, open, close)
+                    let (maybe_loop_start, close) = if maybe_open.is_some() {
+                        (maybe_loop_start, close)
                     } else {
                         // this open block has already been closed, go to next block stack entry
-                        let (maybe_loop_start, maybe_open, close) = block_stack.pop()
+                        let (maybe_loop_start, _, close) = block_stack.pop()
                             .expect("We need blocks in the stack to close a block");
-                        (maybe_loop_start, maybe_open.expect("Need an open block to close it"), close)
+                        (maybe_loop_start, close)
                     };
 
                     block_stack.push((maybe_loop_start, None, close));
 
-                    code_gen.handle_close_block(*open_position, &self.tokens, maybe_loop_start, open, close)?;
+                    code_gen.handle_close_block(*open_position, &self.tokens, maybe_loop_start, close)?;
                     if let Token::While = &self.tokens[open_position - 1] {
                         type_stack.pop();
                     }
@@ -314,7 +313,6 @@ impl<'ctx> CodeGen<'ctx> {
                     open_position: usize,
                     tokens: &[Token],
                     loop_start: Option<BasicBlock>,
-                    previous_open_block: BasicBlock,
                     previous_close_block: BasicBlock) -> Result<(), CompilerError> {
         match &tokens[open_position - 1] {
             Token::While => {
@@ -943,8 +941,8 @@ impl<'ctx> CodeGen<'ctx> {
     }
     fn call_routine(&self, routine: &Routine, type_stack: &mut Vec<LLVMType>) -> Result<(), CompilerError> {
         match routine {
-            Routine::Intrinsic { signiture, routine } => self.call_intrinsic(routine, type_stack),
-            Routine::Pile { signiture, routine } => todo!(),
+            Routine::Intrinsic { signiture: _, routine } => self.call_intrinsic(routine, type_stack),
+            Routine::Pile { signiture: _, routine: _ } => todo!(),
         }
     }
 
@@ -954,11 +952,9 @@ impl<'ctx> CodeGen<'ctx> {
         let pop_byte = self.get_function(POP_BYTE)?;
         let pop_i16 = self.get_function(POP_I16)?;
         let pop_i32 = self.get_function(POP_I32)?;
-        let pop_i64 = self.get_function(POP_I64)?;
         let pop_str_ptr = self.get_function(POP_STR_PTR)?;
 
         let push_bool = self.get_function(PUSH_BOOL)?;
-        let push_byte = self.get_function(PUSH_BYTE)?;
         let push_i16 = self.get_function(PUSH_I16)?;
         let push_i32 = self.get_function(PUSH_I32)?;
         let push_str_ptr = self.get_function(PUSH_STR_PTR)?;
@@ -1093,7 +1089,7 @@ impl<'ctx> CodeGen<'ctx> {
                             || CompilerError::InvalidInsertValueResult { expected: "array".to_owned(), found: "None".to_owned() })?;
                         let array_value = self.builder.build_insert_value(array_value, last_16, 1, "char_bytes");
                         let Some(AggregateValueEnum::ArrayValue(array_value)) = array_value else {
-                            return Err(CompilerError::InvalidInsertValueResult { expected: "array".to_owned(), found: format!("{:?}", array_value).to_owned() });
+                            return Err(CompilerError::InvalidInsertValueResult { expected: "array".to_owned(), found: format!("{:?}", array_value) });
                         };
 
                         self.builder.build_call(print_char, &[array_value.into()], "print_result");
@@ -1374,6 +1370,4 @@ impl<'ctx> CodeGen<'ctx> {
     fn end_top_level_statements(&self)  {
         self.builder.build_return(None);
     }
-
-    
 }
