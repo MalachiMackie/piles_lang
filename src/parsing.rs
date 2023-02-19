@@ -142,8 +142,9 @@ impl<'a> Parser<Chars<'a>> {
                 IntermediateToken::Constant(value) => {
                     if let (Some(definition_tokens), Value::String(str_value)) = (&mut current_routine_definition_tokens, &value) {
                         definition_tokens.push(IntermediateToken::Type(IntermediateType::Type(Type::Generic { name: str_value.to_owned() })));
+                    } else {
+                        push_token(Token::Constant(value.clone()), &mut current_routine_body_tokens, &mut tokens);
                     }
-                    push_token(Token::Constant(value.clone()), &mut current_routine_body_tokens, &mut tokens);
                 },
                 IntermediateToken::If => {
                     push_token(Token::If, &mut current_routine_body_tokens, &mut tokens);
