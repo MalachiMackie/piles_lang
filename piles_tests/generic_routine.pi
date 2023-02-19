@@ -1,0 +1,6 @@
+!!my_routine | "a" -> "a" "a" {
+	!clone
+}
+
+10 !my_routine !print !print
+"Hi" !my_routine !print !print

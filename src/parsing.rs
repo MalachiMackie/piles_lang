@@ -136,9 +136,13 @@ impl<'a> Parser<Chars<'a>> {
                 tokens.push(token);
             }
         }
+
         for token in intermediate_tokens {
             match token.clone() {
                 IntermediateToken::Constant(value) => {
+                    if let (Some(definition_tokens), Value::String(str_value)) = (&mut current_routine_definition_tokens, &value) {
+                        definition_tokens.push(IntermediateToken::Type(IntermediateType::Type(Type::Generic { name: str_value.to_owned() })));
+                    }
                     push_token(Token::Constant(value.clone()), &mut current_routine_body_tokens, &mut tokens);
                 },
                 IntermediateToken::If => {
@@ -186,11 +190,11 @@ impl<'a> Parser<Chars<'a>> {
                         current_routine_definition_tokens = None;
                         current_routine_body_tokens = Some(Vec::new());
                     } else if let Some(body_tokens) = &mut current_routine_body_tokens {
-                            routine_nest_level += 1;
-                            body_tokens.push(Token::Block(Block::Open { close_position }));
-                        } else {
-                            tokens.push(Token::Block(Block::Open { close_position }))
-                        }
+                        routine_nest_level += 1;
+                        body_tokens.push(Token::Block(Block::Open { close_position }));
+                    } else {
+                        tokens.push(Token::Block(Block::Open { close_position }))
+                    }
                 },
                 IntermediateToken::Block(Block::Close { open_position }) => {
                     if routine_nest_level == 0 {
@@ -253,7 +257,6 @@ impl<'a> Parser<Chars<'a>> {
 
     fn next(&mut self, token_number: usize) -> Option<Result<IntermediateToken, ParseError>> {
         let mut current_part = Vec::new();
-        // todo: add all values at compile time
         let mut token_type = None;
         let mut delimeter: &dyn Fn(char) -> bool = &char::is_whitespace;
         for next_char in self.chars.by_ref() {
