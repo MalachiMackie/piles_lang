@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use inkwell::basic_block::BasicBlock;
 use inkwell::targets::TargetTriple;
 use inkwell::IntPredicate;
@@ -7,7 +9,8 @@ use inkwell::types::{IntType, VoidType, PointerType, BasicType};
 use inkwell::module::{Module, Linkage};
 use inkwell::AddressSpace;
 use inkwell::values::{BasicValueEnum, PointerValue, IntValue, AggregateValueEnum, FunctionValue, BasicMetadataValueEnum};
-use crate::{Token, Block};
+use crate::routines::RoutineSigniture;
+use crate::{Token, Block, Type};
 use crate::{PileProgram, Value, routines::{Routine, IntrinsicRoutine}};
 
 
@@ -112,73 +115,20 @@ impl PileProgram {
         code_gen.build_str_concat()?;
         code_gen.build_string_compare()?;
 
-        let mut type_stack = Vec::new();
-        let entry_block = code_gen.start_top_level_statements();
-        let mut block_stack: Vec<(Option<BasicBlock>, Option<BasicBlock>, BasicBlock)> = Vec::new();
+        let functions = code_gen.declare_routines(&self.routines);
+        let main_fn = code_gen.declare_routine("main");
 
-        let mut token_index = 0;
-        while let Some(token) = self.tokens.get(token_index) {
-            match token {
-                Token::Constant(value) => code_gen.push_constant(value, &mut type_stack)?,
-                Token::If | Token::While => {
-                    type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
-                },
-                Token::Block(Block::Open { close_position: _ }) => {
-                    let (_, maybe_open, close) = block_stack.last()
-                        .cloned()
-                        .unwrap_or((None, None, entry_block));
-
-                    let block_to_append = if let Some(open) = maybe_open {
-                        open
-                    } else {
-                        block_stack.pop();
-                        close
-                    };
-
-                    let previous_token = &self.tokens[token_index - 1];
-                    let (loop_start, open, close) = match previous_token {
-                        Token::While => {
-                            code_gen.handle_while_open_block(
-                                block_to_append)
-                                .map(|(start, open, close)| (Some(start), open, close))
-                        },
-                        Token::If => {
-                            code_gen.handle_if_open_block(
-                                block_to_append).map(|(open, close)| (None, open, close))
-                        },
-                        _ => Err(CompilerError::UnexpectedPreOpenBlockToken),
-                    }?;
-                    block_stack.push((loop_start, Some(open), close));
-                },
-                Token::Block(Block::Close { open_position }) => {
-                    let (maybe_loop_start, maybe_open, close) = block_stack.pop()
-                        .expect("We need blocks in the stack to close a block");
-                    let (maybe_loop_start, close) = if maybe_open.is_some() {
-                        (maybe_loop_start, close)
-                    } else {
-                        // this open block has already been closed, go to next block stack entry
-                        let (maybe_loop_start, _, close) = block_stack.pop()
-                            .expect("We need blocks in the stack to close a block");
-                        (maybe_loop_start, close)
-                    };
-
-                    block_stack.push((maybe_loop_start, None, close));
-
-                    code_gen.handle_close_block(*open_position, &self.tokens, maybe_loop_start, close)?;
-                    if let Token::While = &self.tokens[open_position - 1] {
-                        type_stack.pop();
-                    }
-                },
-                Token::RoutineCall(routine_name) =>{
-                    let Some(routine) = self.routines.get(routine_name) else {
-                        return Err(CompilerError::MissingRoutine(routine_name.to_owned()));
-                    };
-                    code_gen.call_routine(routine, &mut type_stack)?;
-                },
-            }
-            token_index += 1;
+        for (routine, fn_value) in functions.iter() {
+            let Routine::Pile { signiture, routine: tokens } = routine else {
+                panic!("declare_routines should only build pile routines");
+            };
+            code_gen.build_routine(*fn_value, tokens, signiture, &self.routines)?;
         }
-        code_gen.end_top_level_statements();
+
+        let main_signiture = RoutineSigniture::new("main", &[], &[]);
+
+        code_gen.build_routine(main_fn, &self.tokens, &main_signiture, &self.routines)?;
+
 
         let ll_file = &file_name[..(file_name.len() - 3)];
         code_gen.module.print_to_file(format!("{}.ll", ll_file)).map_err(|err| CompilerError::PrintToFileFailure(err.to_string()))?;
@@ -207,7 +157,6 @@ struct LLVMValueTypes<'a> {
     generic_address_space: AddressSpace,
     str_type: PointerType<'a>,
 }
-
 
 impl<'ctx> CodeGen<'ctx> {
     fn new(module_name: &str, context: &'ctx Context) -> Self {
@@ -275,6 +224,103 @@ impl<'ctx> CodeGen<'ctx> {
             builder,
             types,
         }
+    }
+
+    fn declare_routine<'a, 'b>(&'a self, name: &'b str) -> FunctionValue<'a> {
+        let fn_type = self.types.void_type.fn_type(&[], false);
+        self.module.add_function(name, fn_type, None)
+    }
+
+    fn declare_routines<'a, 'b>(&'a self, routines: &'b HashMap<String, Routine>) -> Box::<[(&'b Routine, FunctionValue<'a>)]> {
+        let functions: Vec<_> = routines.iter()
+            .filter(|(_, r)| matches!(r, Routine::Pile { signiture: _, routine: _ }))
+            .map(|(_, r)| (r, self.declare_routine(r.signiture().name())))
+            .collect();
+
+        functions.into_boxed_slice()
+    }
+
+    fn build_routine(&self, fn_value: FunctionValue, tokens: &[Token], signiture: &RoutineSigniture, routines: &HashMap<String, Routine>) -> Result<(), CompilerError> {
+        let entry_block = self.context.append_basic_block(fn_value, "entry");
+
+        self.builder.position_at_end(entry_block);
+
+        let mut type_stack: Vec<_> = signiture.inputs().iter().map(|t| {
+            match t {
+                Type::String => LLVMType::String(LLVMString::Constant),
+                Type::I32 => LLVMType::I32,
+                Type::Char => LLVMType::Char,
+                Type::Bool => LLVMType::Bool,
+                Type::Generic { name: _ } => todo!(),
+            }
+        }).collect();
+        let mut block_stack = Vec::new();
+        let mut token_index = 0;
+        while let Some(token) = tokens.get(token_index) {
+            match token {
+                Token::Constant(value) => self.push_constant(value, &mut type_stack)?,
+                Token::If | Token::While => {
+                    type_stack.pop().ok_or(CompilerError::EmptyTypeStack)?;
+                },
+                Token::Block(Block::Open { close_position: _ }) => {
+                    let (_, maybe_open, close) = block_stack.last()
+                        .cloned()
+                        .unwrap_or((None, None, entry_block));
+
+                    let block_to_append = if let Some(open) = maybe_open {
+                        open
+                    } else {
+                        block_stack.pop();
+                        close
+                    };
+
+                    let previous_token = &tokens[token_index - 1];
+                    let (loop_start, open, close) = match previous_token {
+                        Token::While => {
+                            self.handle_while_open_block(
+                                block_to_append)
+                                .map(|(start, open, close)| (Some(start), open, close))
+                        },
+                        Token::If => {
+                            self.handle_if_open_block(
+                                block_to_append).map(|(open, close)| (None, open, close))
+                        },
+                        _ => Err(CompilerError::UnexpectedPreOpenBlockToken),
+                    }?;
+                    block_stack.push((loop_start, Some(open), close));
+                },
+                Token::Block(Block::Close { open_position }) => {
+                    let (maybe_loop_start, maybe_open, close) = block_stack.pop()
+                        .expect("We need blocks in the stack to close a block");
+                    let (maybe_loop_start, close) = if maybe_open.is_some() {
+                        (maybe_loop_start, close)
+                    } else {
+                        // this open block has already been closed, go to next block stack entry
+                        let (maybe_loop_start, _, close) = block_stack.pop()
+                            .expect("We need blocks in the stack to close a block");
+                        (maybe_loop_start, close)
+                    };
+
+                    block_stack.push((maybe_loop_start, None, close));
+
+                    self.handle_close_block(*open_position, &tokens, maybe_loop_start, close)?;
+                    if let Token::While = &tokens[open_position - 1] {
+                        type_stack.pop();
+                    }
+                },
+                Token::RoutineCall(routine_name) =>{
+                    let Some(routine) = routines.get(routine_name) else {
+                        return Err(CompilerError::MissingRoutine(routine_name.to_owned()));
+                    };
+                    self.call_routine(routine, &mut type_stack)?;
+                },
+            }
+            token_index += 1;
+        }
+
+        self.builder.build_return(None);
+        
+        Ok(())
     }
 
     fn handle_while_open_block<'a>(&'a self, previous_block: BasicBlock<'a>) -> Result<(BasicBlock<'a>, BasicBlock<'a>, BasicBlock<'a>), CompilerError> {
@@ -942,7 +988,25 @@ impl<'ctx> CodeGen<'ctx> {
     fn call_routine(&self, routine: &Routine, type_stack: &mut Vec<LLVMType>) -> Result<(), CompilerError> {
         match routine {
             Routine::Intrinsic { signiture: _, routine } => self.call_intrinsic(routine, type_stack),
-            Routine::Pile { signiture: _, routine: _ } => todo!(),
+            Routine::Pile { signiture, routine: _ } => {
+                for _ in signiture.inputs() {
+                    type_stack.pop();
+                }
+                let routine = self.get_function(signiture.name())?;
+                self.builder.build_call(routine, &[], "");
+
+                for output in signiture.outputs() {
+                    type_stack.push(match output {
+                        Type::Generic { name: _ } => panic!("Generic routine should have been specialized"),
+                        Type::I32 => LLVMType::I32,
+                        Type::Char => LLVMType::Char,
+                        Type::Bool => LLVMType::Bool,
+                        Type::String => LLVMType::String(LLVMString::Stack),
+                    });
+                }
+
+                Ok(())
+            },
         }
     }
 
@@ -1357,17 +1421,5 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
         }
-    }
-
-    fn start_top_level_statements(&self) -> BasicBlock {
-        let main_fn_type = self.types.void_type.fn_type(&[], false);
-        let main_fn = self.module.add_function("main", main_fn_type, None);
-        let basic_block = self.context.append_basic_block(main_fn, "entry");
-        self.builder.position_at_end(basic_block);
-        basic_block
-    }
-
-    fn end_top_level_statements(&self)  {
-        self.builder.build_return(None);
     }
 }

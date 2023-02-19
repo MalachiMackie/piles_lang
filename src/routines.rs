@@ -35,7 +35,7 @@ impl Routine {
     }
 }
 
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Clone, Debug, PartialOrd, Eq, Ord)]
 pub(crate) struct RoutineSigniture {
     name: String,
     inputs: Box<[Type]>,

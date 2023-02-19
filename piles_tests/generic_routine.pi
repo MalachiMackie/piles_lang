@@ -1,6 +1,16 @@
+!!unused_routine | None -> None {
+	"Hello void" !print
+}
+
 !!my_routine | "a" -> "a" "a" {
 	!clone
 }
 
-10 !my_routine !print !print
-"Hi" !my_routine !print !print
+!!other_routine | bool -> None {
+	!my_routine !print !print !println
+}
+
+10 !my_routine !print !print !println
+"Hi" !my_routine !print !print !println
+"yo" !my_routine !print !print !println
+true !other_routine

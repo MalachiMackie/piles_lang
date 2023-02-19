@@ -2,9 +2,10 @@ mod parsing;
 mod routines;
 mod type_checking;
 mod compile;
+mod specalization;
 
-use routines::{Routine, IntrinsicRoutine};
-use std::collections::{HashMap, VecDeque};
+use routines::{Routine, IntrinsicRoutine, RoutineSigniture};
+use std::collections::{HashMap, VecDeque, HashSet, BTreeMap};
 use std::env;
 use std::fmt::{Display, Formatter};
 use std::io::prelude::*;
@@ -53,7 +54,7 @@ fn main() {
     let mut file = std::fs::File::open(file_name).unwrap();
     file.read_to_string(&mut contents).unwrap();
 
-    let program = match PileProgram::parse(&contents) {
+    let mut program = match PileProgram::parse(&contents) {
         Ok(program) => program,
         Err(err) => {
             println!("Error parsing: {:?}", err);
@@ -64,6 +65,8 @@ fn main() {
         println!("Type Checking Failed: {:?}", err);
         return;
     }
+
+    program.specalize();
 
     match operation {
         Operation::Interpret => _ = program.run(),
@@ -217,7 +220,7 @@ enum Block {
     Close { open_position: usize },
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone)]
 enum Type {
     Generic { name: String },
     I32,
@@ -226,12 +229,35 @@ enum Type {
     Bool,
 }
 
+impl Display for Type {
+    fn fmt(&self, fmt: &mut Formatter) -> std::fmt::Result {
+        match self {
+            Type::I32 => fmt.write_str("i32"),
+            Type::String => fmt.write_str("str"),
+            Type::Char => fmt.write_str("char"),
+            Type::Bool => fmt.write_str("bool"),
+            Type::Generic { name } => fmt.write_str(format!("_{name}_").as_str())
+        }
+    }
+}
+
 #[derive(PartialEq, Debug, Clone)]
 enum Value {
     I32(i32),
     Char(char),
     String(String),
     Bool(bool),
+}
+
+impl Value {
+    fn get_type(&self) -> Type {
+        match self {
+            Value::String(_) => Type::String,
+            Value::I32(_) => Type::I32,
+            Value::Char(_) => Type::Char,
+            Value::Bool(_) => Type::Bool,
+        }
+    }
 }
 
 impl Display for Value {
